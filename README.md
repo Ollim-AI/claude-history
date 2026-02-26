@@ -3,11 +3,26 @@
 CLI navigator for Claude Code conversation history. Browse sessions, search
 across conversations, read transcripts, and inspect subagent activity.
 
+Also ships as a **Claude Code skill** — Claude can investigate its own past
+sessions.
+
 ## Install
 
+### CLI tool (global)
+
 ```bash
-pip install claude-history
+uv tool install claude-history@git+https://github.com/Ollim-AI/claude-history.git
 ```
+
+### Claude Code skill
+
+Clone into your personal skills directory:
+
+```bash
+git clone https://github.com/Ollim-AI/claude-history.git ~/.claude/skills/claude-history
+```
+
+Claude Code will discover it automatically. Use `/claude-history` in any session.
 
 ## Usage
 
@@ -49,6 +64,8 @@ Claude Code stores conversation history as JSONL files in
 `~/.claude/projects/`. Each project directory contains session files that
 record every message, tool call, and response. `claude-history` parses these
 files and presents them in a navigable format.
+
+See [SPEC.md](SPEC.md) for the full JSONL format specification.
 
 ## License
 

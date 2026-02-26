@@ -1,0 +1,134 @@
+---
+name: claude-history
+description: Deep investigation tool for past Claude Code sessions. Use when you need to understand what work was done, reconstruct decisions, find prior implementations, or build context from previous sessions. Goes beyond listing — reads full transcripts.
+allowed-tools: Bash(claude-history:*), Read
+---
+
+# Claude History
+
+Investigate past Claude Code sessions to understand what work was actually performed. This is a research tool — the goal is always to **read and understand transcript content**, not just list sessions or search for keywords.
+
+Run commands with `claude-history <command>`.
+
+## Investigation Workflow
+
+Follow this workflow when investigating past sessions. The key insight: **listing sessions and searching are just navigation — reading transcripts is the actual work.**
+
+### Step 1: Discover relevant sessions
+
+Start with one of these discovery methods depending on what you know:
+
+| What you know | Command | Purpose |
+|--------------|---------|---------|
+| A topic or keyword | `search QUERY` | Find sessions mentioning the topic |
+| Rough timeframe | `sessions --since 3d` | Filter sessions by time range |
+| "What did we just do?" | `prompts prev` | See user prompts from last session |
+
+**Scoping by time range:** Use `--since` to filter by time. Works on both `sessions` and `search`. Accepts:
+- Relative: `3d` (days), `1w` (weeks), `24h` (hours), `30m` (minutes — not months)
+- Named: `today`, `yesterday`
+- ISO date: `2024-01-15`
+
+Note: `--since` filters from a point forward to now — there's no end-date/range filter. For a narrow historical window, combine with `--size` to keep output manageable.
+
+Discovery gives you **session IDs** to investigate. It does not give you understanding — that comes from Step 2.
+
+### Step 2: Read transcripts deeply (this is the core activity)
+
+Once you have a session ID, **read the full transcript** to understand what happened:
+
+```bash
+# Start with prompts to get the shape of the session
+claude-history prompts SESSION_ID
+
+# Then read the full transcript — this is where understanding comes from
+claude-history transcript SESSION_ID -vv
+```
+
+Use `-vv` to see thinking + text + tool calls, which reveals the reasoning behind decisions. For sessions with multiple context windows, read each one:
+
+```bash
+claude-history transcript SESSION_ID:0 -vv
+claude-history transcript SESSION_ID:1 -vv
+```
+
+**Read the entire transcript of important sessions.** Skimming prompts alone misses the actual work — file edits, debugging steps, architectural decisions, and implementation details all live in the transcript body.
+
+### Step 3: Follow threads when needed
+
+If a transcript references prior work, follow that thread:
+- Note session IDs mentioned in conversation
+- Use `search` to find related sessions by file paths, function names, or error messages
+- Read those transcripts too
+
+### Step 4: Synthesize and verify
+
+After reading transcripts, summarize what was actually accomplished — not what was attempted or discussed, but what concrete changes were made.
+
+**Verify the synthesis before presenting:**
+- Every session ID discovered in step 1 has been read and accounted for — list any unread sessions and why they were skipped
+- Concrete changes are anchored to evidence (file paths modified, commands run, commits made) — not just descriptions of intent
+- If the investigation was prompted by a specific question, state whether the question was answered or remains open
+
+## Anti-patterns — DO NOT do these
+
+1. **Listing and stopping.** Running `sessions` and reporting the list is not investigation. Session listings show timestamps and first-prompt previews — they don't tell you what work was done. Always proceed to reading transcripts.
+
+2. **Search-only investigation.** Running `search "keyword"` returns snippets with session IDs. These snippets are breadcrumbs, not answers. You must follow up by reading the full transcript of matching sessions to understand the context around each match.
+
+3. **Reading only prompts.** User prompts show what was *requested*, not what was *done*. The transcript body contains the actual work: files edited, code written, bugs found, decisions made. Always read transcripts, not just prompts.
+
+## Command Reference
+
+### Discovery Commands
+
+| Command | Description |
+|---------|-------------|
+| `sessions` | List recent sessions with prompt/context-window counts |
+| `sessions --since 3d` | Filter by time (`3d`, `1w`, `24h`, `today`, `2024-01-15`) |
+| `sessions --page N --size N` | Paginate (default: 10 per page) |
+| `search QUERY` | Search prompts + responses across all sessions |
+| `search QUERY --since 1w` | Search with time filter |
+| `search -p QUERY` | Search prompts only (faster) |
+
+### Deep Reading Commands (use these — they're the point)
+
+| Command | Description |
+|---------|-------------|
+| `prompts SESSION` | User-typed prompts in a session (good for orientation) |
+| `prompts -v SESSION` | All messages including system/tool results |
+| `transcript SESSION` | Full conversation (all context windows) |
+| `transcript SESSION:N` | Single context window (0-indexed) |
+| `transcript -vv SESSION` | **Recommended**: thinking + text + tool calls |
+| `transcript -vvv SESSION` | Everything including tool results (no truncation) |
+
+### Individual Response Commands
+
+| Command | Description |
+|---------|-------------|
+| `response UUID` | Claude's text reply for one prompt |
+| `response -v UUID` | Text + tool calls |
+| `response -vv UUID` | Thinking + text + tool calls |
+| `prompts UUID` | Full text of a truncated prompt |
+
+### Subagent Commands
+
+| Command | Description |
+|---------|-------------|
+| `subagents` | List subagent threads (model, duration, errors) |
+| `subagents AGENT_ID` | Detail: prompt, tool timeline, tokens, errors |
+
+## Session References
+
+Anywhere a SESSION_ID is accepted, you can use `prev` to reference recent sessions:
+
+- `prev` or `prev-1` — previous session
+- `prev-2` — two sessions ago
+- `prev-N` — N sessions ago
+
+Append `:W` for a specific context window: `prev-2:0`
+
+## Targeting Other Projects
+
+- `--cwd PATH` — resolve project from a different directory
+- `--project PATH` — specify project directory directly (under `~/.claude/projects/`)
