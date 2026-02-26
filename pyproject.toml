@@ -1,0 +1,41 @@
+[project]
+name = "claude-history"
+version = "0.1.0"
+description = "CLI navigator for Claude Code conversation history"
+requires-python = ">=3.10"
+license = "MIT"
+readme = "README.md"
+authors = [{ name = "Julius" }]
+keywords = ["claude", "claude-code", "history", "conversation", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Environment :: Console",
+    "Topic :: Software Development :: Documentation",
+]
+
+[project.urls]
+Repository = "https://github.com/Ollim-AI/claude-history"
+Issues = "https://github.com/Ollim-AI/claude-history/issues"
+
+[project.scripts]
+claude-history = "claude_history.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM", "RUF"]
+ignore = ["SIM102", "SIM108", "E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["claude_history"]
