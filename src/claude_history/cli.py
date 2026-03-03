@@ -16,8 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
-
+from typing import Literal, NamedTuple
 
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
@@ -103,6 +102,7 @@ class Session:
     explicit_boundaries: set[datetime] = field(default_factory=set)
     slug: str | None = None
     first_prompt: tuple[datetime, str] | None = None
+    team_names: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +150,7 @@ class SubagentMetadata:
     tools: tuple[ToolInfo, ...]
     errors: tuple[str, ...]
     response_text: str
+    teammate_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +167,73 @@ Record = dict | ProgressStub
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 PAGE_SIZE = 10
 DT_MIN = datetime.min.replace(tzinfo=timezone.utc)
+
+# --- Agent teams support ---
+
+_BLUE = "\033[34m"
+_PURPLE = "\033[35m"
+_TEAMMATE_COLORS: dict[str, str] = {
+    "yellow": _YELLOW,
+    "blue": _BLUE,
+    "green": _GREEN,
+    "purple": _PURPLE,
+}
+
+
+class TeammateMessage(NamedTuple):
+    teammate_id: str
+    color: str | None
+    summary: str | None
+    body: str
+    body_type: str  # "text", "idle", "task", "shutdown"
+    uuid: str
+    timestamp: datetime | None
+
+
+_TEAMMATE_MSG_RE = re.compile(
+    r"<teammate-message\s+"
+    r'teammate_id="([^"]*)"'
+    r'(?:\s+color="([^"]*)")?'
+    r'(?:\s+summary="([^"]*)")?'
+    r"[^>]*>"
+    r"(.*?)"
+    r"</teammate-message>",
+    re.DOTALL,
+)
+
+
+def parse_teammate_message(record: dict) -> TeammateMessage | None:
+    """Parse a teammate-message user record into a TeammateMessage."""
+    content = record.get("message", {}).get("content", "")
+    if not isinstance(content, str):
+        return None
+    m = _TEAMMATE_MSG_RE.search(content)
+    if not m:
+        return None
+    body = m.group(4).strip()
+    body_type = "text"
+    if body.startswith("{"):
+        try:
+            j = json.loads(body)
+        except json.JSONDecodeError:
+            j = None
+        if isinstance(j, dict):
+            t = j.get("type", "")
+            if t == "idle_notification":
+                body_type = "idle"
+            elif t == "task_assignment":
+                body_type = "task"
+            elif t in ("shutdown_request", "shutdown_response", "shutdown_approved"):
+                body_type = "shutdown"
+    return TeammateMessage(
+        teammate_id=m.group(1),
+        color=m.group(2),
+        summary=m.group(3),
+        body=body,
+        body_type=body_type,
+        uuid=record.get("uuid", ""),
+        timestamp=parse_timestamp(record.get("timestamp")),
+    )
 
 
 def parse_timestamp(ts: str | None) -> datetime | None:
@@ -476,6 +544,10 @@ def extract_user_prompts(records: list[Record]) -> list[Prompt]:
         message = record.get("message", {})
         content = message.get("content", [])
 
+        # Skip teammate-message records (string content = XML, not user-typed)
+        if isinstance(content, str):
+            continue
+
         prompt_text = extract_content_text(content)
 
         if not prompt_text:
@@ -537,9 +609,9 @@ def is_user_text_prompt(record: dict) -> bool:
 
     content = record.get("message", {}).get("content", [])
 
-    # Check for text content
+    # String content = teammate-message record (not user-typed)
     if isinstance(content, str):
-        return bool(content.strip())
+        return False
 
     if isinstance(content, list):
         for block in content:
@@ -971,6 +1043,11 @@ def _accumulate_session_record(sess: Session, record: dict) -> None:
             sess.explicit_boundaries.add(dt)
         return
 
+    # Collect team names
+    team_name = record.get("teamName")
+    if team_name:
+        sess.team_names.add(team_name)
+
     # Capture slug from any record
     slug = record.get("slug")
     if slug and not sess.slug:
@@ -1214,10 +1291,19 @@ def extract_subagent_metadata(filepath: Path, records: list[dict]) -> SubagentMe
     first = records[0] if records else {}
     slug = first.get("slug", "")
     prompt = ""
+    teammate_name: str | None = None
     if first.get("type") == "user":
         msg = first.get("message", {})
         content = msg.get("content", "")
-        prompt = content if isinstance(content, str) else extract_content_text(content)
+        if isinstance(content, str):
+            tm = parse_teammate_message(first)
+            if tm:
+                teammate_name = tm.teammate_id
+                prompt = tm.body[:200] if tm.body else ""
+            else:
+                prompt = content
+        else:
+            prompt = extract_content_text(content)
 
     # Scan records for model, timestamps, tokens, tools, errors
     model = None
@@ -1271,6 +1357,7 @@ def extract_subagent_metadata(filepath: Path, records: list[dict]) -> SubagentMe
         tools=tuple(tools),
         errors=tuple(errors),
         response_text="\n\n".join(response_texts),
+        teammate_name=teammate_name,
     )
 
 
@@ -1547,7 +1634,10 @@ def cmd_subagents(args: argparse.Namespace) -> None:
 
     for agent in subagents:
         session_short = cyan(agent.session_id[:8])
-        print(f"  {bold(agent.agent_id)}  (session: {session_short})")
+        label = ""
+        if agent.teammate_name:
+            label = f"  {cyan(f'[{agent.teammate_name}]')}"
+        print(f"  {bold(agent.agent_id)}{label}  (session: {session_short})")
 
         parts: list[str] = []
         parts.append(agent.model)
@@ -1587,6 +1677,7 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     show_thinking = args.show_thinking
     show_tools = not args.hide_tools
     show_tool_results = args.show_tool_results
+    show_system = getattr(args, "show_system", False)
 
     # Prompts-only doesn't need progress stubs (no chain traversal)
     records = get_session_conversations(
@@ -1657,6 +1748,18 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     # Build Task->subagent map once (not needed for prompts-only)
     task_agent_map = {} if prompts_only else build_task_agent_map(records)
 
+    # Collect teammate messages for this session
+    teammate_msgs: list[TeammateMessage] = []
+    if not prompts_only:
+        for r in records:
+            if isinstance(r, ProgressStub):
+                continue
+            if r.get("type") != "user" or r.get("sessionId") != session_id:
+                continue
+            tm = parse_teammate_message(r)
+            if tm:
+                teammate_msgs.append(tm)
+
     if len(windows) > 1:
         print(f"Session: {cyan(session_id[:8])} ({len(windows)} context windows)\n")
 
@@ -1667,15 +1770,66 @@ def cmd_transcript(args: argparse.Namespace) -> None:
             if p.is_user_prompt
         ]
 
+        # Merge teammate messages into timeline for this window.
+        # Use boundary-based assignment: a message belongs to the last
+        # window whose start_time <= message timestamp.  This handles
+        # messages that arrive between user prompts (after window's
+        # last prompt but before the next window's first prompt).
+        timeline: list[Prompt | TeammateMessage] = list(user_prompts)
+        if teammate_msgs:
+            next_start = (
+                compactions[wi + 1].start_time
+                if wi + 1 < len(compactions)
+                else None
+            )
+            ws = compaction.start_time
+            for tm in teammate_msgs:
+                if not tm.timestamp:
+                    continue
+                if ws and tm.timestamp < ws:
+                    continue
+                if next_start and tm.timestamp >= next_start:
+                    continue
+                timeline.append(tm)
+            timeline.sort(key=lambda x: x.timestamp or DT_MIN)
+
+        prompt_count = len(user_prompts)
+
         # Print header per window
         if len(windows) > 1:
             print(
-                f"{bold(f'=== Context window {wi} ===')} ({len(user_prompts)} prompts)\n"
+                f"{bold(f'=== Context window {wi} ===')} ({prompt_count} prompts)\n"
             )
         else:
             print(f"Session: {cyan(session_id[:8])} | Context window {yellow(wi)}\n")
 
-        for prompt in user_prompts:
+        active_team = ""
+        for item in timeline:
+            if isinstance(item, TeammateMessage):
+                # Skip protocol messages unless --show-system
+                if item.body_type != "text" and not show_system:
+                    continue
+                color_code = _TEAMMATE_COLORS.get(item.color or "", _CYAN)
+                label = f"{color_code}[{item.teammate_id}]{_RESET}"
+                ts_str = (
+                    dim(format_local(item.timestamp, "%Y-%m-%d %H:%M"))
+                    if item.timestamp
+                    else ""
+                )
+                print(f"{label} {ts_str}")
+                if item.body_type != "text":
+                    # Protocol message — dim one-liner
+                    print(dim(f"  {item.body_type}"))
+                else:
+                    print(item.body)
+                print()
+                if not prompts_only:
+                    print(dim("---"))
+                    print()
+                continue
+
+            # Regular user prompt
+            prompt = item
             ts_str = (
                 dim(format_local(prompt.timestamp, "%Y-%m-%d %H:%M"))
                 if prompt.timestamp
@@ -1689,6 +1843,21 @@ def cmd_transcript(args: argparse.Namespace) -> None:
                 chain = get_full_response(records, prompt.uuid)
                 if chain:
                     blocks = extract_ordered_content(chain, records if show_tool_results else None)
+
+                    # Team phase separators
+                    for block in blocks:
+                        if block.type == "tool_use" and isinstance(block.content, ToolUseContent):
+                            if block.content.name == "TeamCreate":
+                                tn = block.content.input.get("team_name", "")
+                                active_team = tn
+                                print(f"  {bold(f'─── team: {tn} ───')}\n")
+                            elif block.content.name == "TeamDelete":
+                                tn = active_team or ""
+                                active_team = ""
+                                if tn:
+                                    print(f"  {bold(f'─── end team: {tn} ───')}\n")
+                                else:
+                                    print(f"  {bold('─── end team ───')}\n")
 
                     print(green("[assistant]"))
                     if not render_blocks(
@@ -1725,7 +1894,11 @@ def _render_session_line(session: Session, use_iso: bool) -> str:
         if len(first_text) > 50:
             first_text = first_text[:50] + "..."
         desc = f" | {dim(first_text)}"
-    return f"{session_short} | {ts_str} | {yellow(prompt_count)} {prompt_word} | {yellow(window_count)} ctx{desc}"
+    team_badge = ""
+    if session.team_names:
+        names = ", ".join(sorted(session.team_names))
+        team_badge = f" | {yellow(f'[team: {names}]')}"
+    return f"{session_short} | {ts_str} | {yellow(prompt_count)} {prompt_word} | {yellow(window_count)} ctx{team_badge}{desc}"
 
 
 def cmd_sessions(args: argparse.Namespace) -> None:
@@ -2130,6 +2303,11 @@ def main() -> None:
         "--show-tool-results",
         action="store_true",
         help="Include tool results (full detail, no truncation)",
+    )
+    transcript_parser.add_argument(
+        "--show-system",
+        action="store_true",
+        help="Show team protocol messages (idle notifications, task assignments, shutdown requests)",
     )
     transcript_parser.add_argument(
         "--cwd", help="Working directory path to find project for"

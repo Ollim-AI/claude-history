@@ -39,3 +39,8 @@ ignore = ["SIM102", "SIM108", "E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["claude_history"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

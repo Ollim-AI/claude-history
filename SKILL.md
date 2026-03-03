@@ -70,6 +70,35 @@ After reading transcripts, summarize what was actually accomplished — not what
 - Concrete changes are anchored to evidence (file paths modified, commands run, commits made) — not just descriptions of intent
 - If the investigation was prompted by a specific question, state whether the question was answered or remains open
 
+## Investigating Team Sessions
+
+Team sessions involve a lead agent coordinating teammates. Investigation has three layers:
+
+### Layer 1: Coordination (main transcript)
+
+Start with the main session transcript. Team sessions show `[team: name]` in `sessions` output. The transcript renders teammate messages inline with colored `[teammate_id]` labels — these show what each teammate reported back to the lead.
+
+```bash
+claude-history transcript SESSION_ID --hide-tools
+```
+
+Protocol messages (idle notifications, shutdown requests) are hidden by default. Use `--show-system` to reveal them.
+
+### Layer 2: Teammate work (subagent transcripts)
+
+Each teammate runs as a subagent. Use `subagents` to find them — team subagents show `[teammate_name]` labels:
+
+```bash
+claude-history subagents SESSION_ID
+claude-history transcript AGENT_ID   # read a specific teammate's full work
+```
+
+Focus on teammates with longer durations — they did the substantive work. Short-duration subagents are often shutdown acknowledgments.
+
+### Layer 3: Synthesis (last context window)
+
+The lead's final context window typically contains the synthesis — merged conclusions from all teammates. Read it last to see the converged outcome.
+
 ## Anti-patterns — DO NOT do these
 
 1. **Listing and stopping.** Running `sessions` and reporting the list is not investigation. Session listings show timestamps and first-prompt previews — they don't tell you what work was done. Always proceed to reading transcripts.
@@ -101,6 +130,7 @@ After reading transcripts, summarize what was actually accomplished — not what
 | `transcript SESSION --show-thinking` | **Recommended**: + thinking blocks |
 | `transcript SESSION --show-tool-results` | Everything including tool results (no truncation) |
 | `transcript SESSION --hide-tools` | Text only (no tool calls) |
+| `transcript SESSION --show-system` | + team protocol messages (idle, shutdown) |
 
 ### Individual Response Commands
 
