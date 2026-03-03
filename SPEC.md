@@ -125,6 +125,39 @@ The `tool_result` block's `content` field can be either a string or an array of 
 }
 ```
 
+**Teammate-message records (v2.1.63+, agent teams only):**
+
+In agent teams sessions, messages from teammates are delivered as user records where `message.content` is a **plain string** (not an array) containing XML:
+
+```
+<teammate-message teammate_id="critic" color="yellow" summary="Risk assessment findings">
+  [message body — markdown text, or JSON for system notifications]
+</teammate-message>
+```
+
+XML attributes:
+
+| Attribute | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `teammate_id` | string | yes | Short teammate name (e.g., `"critic"`, `"architect"`) or `"team-lead"` |
+| `color` | string | yes | Display color (observed: `"yellow"`, `"blue"`, `"green"`, `"purple"`) |
+| `summary` | string | no | Short message preview. Absent on idle notifications and some system messages |
+
+These records have `teamName` but do **not** have `isMeta`, `sourceToolAssistantUUID`, or `isCompactSummary`. They pass all existing user-typed prompt filters and require a fifth exclusion rule (see §Identifying User-Typed Prompts).
+
+The message body has several content shapes:
+
+| Shape | Description | Example |
+|-------|-------------|---------|
+| Markdown text | Substantive message from teammate | Reports, proposals, critiques |
+| `idle_notification` JSON | Teammate went idle | `{"type":"idle_notification","from":"critic","timestamp":"...","idleReason":"available"}` |
+| `task_assignment` JSON | Task dispatched to teammate | `{"type":"task_assignment","taskId":"1","subject":"...","description":"...","assignedBy":"team-lead","timestamp":"..."}` |
+| `shutdown_request` JSON | Shutdown protocol | `{"type":"shutdown_request","requestId":"shutdown-{unix_ms}@{name}","from":"team-lead","timestamp":"..."}` |
+
+`idleReason` values observed: `"available"`, `"interrupted"`.
+
+Teammate-message records also appear in subagent files — the spawn prompt delivered to a teammate arrives wrapped in `<teammate-message teammate_id="team-lead" ...>`.
+
 ---
 
 ### 2. Assistant Record (`type: "assistant"`)
@@ -352,6 +385,7 @@ System metadata records.
 | `compact_boundary` | Context window boundary marker | `compactMetadata`, `logicalParentUuid`, `level` |
 | `api_error` | API error with retry info | `error`, `level`, `retryInMs`, `retryAttempt`, `maxRetries` |
 | `local_command` | Slash command execution | `content`, `level` |
+| `stop_hook_summary` | Post-turn hook execution summary (v2.1.38+) | `hookCount`, `hookInfos`, `hookErrors`, `preventedContinuation`, `stopReason`, `hasOutput`, `level`, `toolUseID` |
 
 **Compact Boundary Record:**
 ```json
@@ -438,9 +472,12 @@ The `message.content` array contains content blocks of various types.
   "name": "Read",
   "input": {
     "file_path": "/path/to/file.py"
-  }
+  },
+  "caller": {"type": "direct"}
 }
 ```
+
+`caller` (object|null, v2.1.38+) is present on tool_use blocks. Only observed value: `{"type": "direct"}` or `null`.
 
 ### Tool Result Block
 
@@ -530,20 +567,24 @@ USER (uuid: W, tool_result for A, parentUuid: Z)
 
 User records include both user-typed prompts and system-generated messages. To distinguish:
 
-| Message Type | Has Assistant Child | Has `sourceToolAssistantUUID` | `isMeta` | `isCompactSummary` |
-|--------------|---------------------|-------------------------------|----------|---------------------|
-| User-typed prompt | yes | no | no | no |
-| Tool result | yes | yes | no | no |
-| Compact summary | varies | no | no | **yes** |
-| System-injected (isMeta) | varies | no | yes | no |
+| Message Type | Has Assistant Child | Has `sourceToolAssistantUUID` | `isMeta` | `isCompactSummary` | `message.content` type |
+|--------------|---------------------|-------------------------------|----------|---------------------|------------------------|
+| User-typed prompt | yes | no | no | no | array |
+| Tool result | yes | yes | no | no | array |
+| Compact summary | varies | no | no | **yes** | array |
+| System-injected (isMeta) | varies | no | yes | no | array |
+| Teammate message | yes | no | no | no | **string** (XML) |
 
 **Rule:** A user message is user-typed if and only if:
 1. It has an `assistant` record as its child (check `parentUuid` of other records)
 2. It does NOT have `sourceToolAssistantUUID` field
 3. It does NOT have `isMeta: true`
 4. It does NOT have `isCompactSummary: true`
+5. Its `message.content` is an array, not a string (v2.1.63+: string content indicates a teammate message — see §Teammate-message records)
 
 > **Gotcha:** Compact summary records (`isCompactSummary: true`) contain long system-generated context summaries starting with "This session is being continued from a previous conversation...". They lack both `sourceToolAssistantUUID` and `isMeta`, so they will pass through a filter that only checks those two fields. Always filter on `isCompactSummary` as well.
+
+> **Gotcha (v2.1.63+):** Teammate-message records lack `isMeta`, `sourceToolAssistantUUID`, and `isCompactSummary`, and they DO have an assistant child. They pass all four original filters. The only distinguishing feature is that `message.content` is a string (starting with `<teammate-message`) rather than an array. Always check the content type in agent teams sessions.
 
 ### Context Windows
 
@@ -647,6 +688,7 @@ Short session title used for terminal window names. Minimal structure without uu
 | `slug` | string | Human-readable conversation identifier |
 | `agentId` | string | Hex agent identifier (7-char ≤v2.1.49, 17-char v2.1.50+) |
 | `requestId` | string | API request ID |
+| `teamName` | string | Active team name during agent teams sessions (v2.1.63+). Present on user, assistant, hook_progress, and system records while a team is active. Absent on agent_progress, queue-operation, and file-history-snapshot records. See §Agent Teams. |
 | `thinkingMetadata` | object | Extended thinking config (user records only, see User Record section) |
 
 ---
@@ -668,15 +710,182 @@ Other observed values:
 
 ---
 
+## Agent Teams (v2.1.63+, experimental)
+
+Agent teams sessions introduce team coordination records into the JSONL format. A team session has one lead (the main session file) and multiple teammates (each with their own subagent file). All findings below are from N=1 observed sessions — patterns may evolve.
+
+### teamName Field
+
+`teamName` (string) is a top-level field on records written while a team is active. It identifies which team was active when the record was created.
+
+**Transition mechanics:**
+- `teamName` first appears on the user `tool_result` record AFTER the `TeamCreate` assistant record (the TeamCreate assistant record itself lacks `teamName`)
+- `teamName` drops from the user `tool_result` record AFTER the `TeamDelete` assistant record (the TeamDelete assistant record still carries `teamName`)
+- `teamName` blocks are contiguous within a team lifecycle (excluding queue-operation records, which never carry `teamName`)
+
+**Which record types carry `teamName`:**
+
+| Record type | Gets `teamName`? | Notes |
+|-------------|-----------------|-------|
+| `user` | Yes | During team phase |
+| `assistant` | Yes | During team phase |
+| `progress` (hook_progress) | Yes | Only hook_progress |
+| `progress` (agent_progress) | **No** | Never, even during team phase |
+| `system` | Yes | If compaction/turn occurs during team phase |
+| `queue-operation` | **No** | Never |
+| `file-history-snapshot` | **No** | Never |
+
+**Compaction during team phases:** When a `compact_boundary` occurs during an active team phase, both the compact_boundary and the subsequent `isCompactSummary` user record inherit the active `teamName`.
+
+### Agent Tool: Teammate Spawn Variant
+
+When the Agent tool spawns a teammate (vs a regular subagent), the `tool_use` input includes additional fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Teammate short name (e.g., `"architect"`, `"critic"`) |
+| `team_name` | string | Team the agent joins |
+| `run_in_background` | boolean | Optional. Agent runs without blocking lead |
+
+The `toolUseResult` has a completely different schema from regular Agent results:
+
+**Regular Agent `toolUseResult` (`status: "completed"`):**
+```json
+{
+  "status": "completed",
+  "agentId": "a3f89066590741a24",
+  "prompt": "...",
+  "content": [...],
+  "totalDurationMs": 64383,
+  "totalTokens": 61470,
+  "totalToolUseCount": 30,
+  "usage": {...}
+}
+```
+
+**Teammate spawn `toolUseResult` (`status: "teammate_spawned"`):**
+```json
+{
+  "status": "teammate_spawned",
+  "prompt": "...",
+  "teammate_id": "architect@agent-refactor",
+  "agent_id": "architect@agent-refactor",
+  "agent_type": "general-purpose",
+  "model": "opus",
+  "name": "architect",
+  "color": "blue",
+  "tmux_session_name": "in-process",
+  "tmux_window_name": "in-process",
+  "tmux_pane_id": "in-process",
+  "team_name": "agent-refactor",
+  "is_splitpane": false,
+  "plan_mode_required": false
+}
+```
+
+> **Critical for parsers:** The `teammate_spawned` variant lacks `agentId` (the hex identifier used to locate subagent files). The `agent_id` field uses `name@team` format instead. Parsers relying on `toolUseResult.agentId` to find subagent files will not find team member files through this mechanism. Team subagent files can be located via `data.agentId` in `agent_progress` records — but see the note below about missing progress records.
+
+### No agent_progress for Team Subagents
+
+Regular subagents produce `agent_progress` records in the main session file, allowing the lead to track their work. **Team subagents produce no `agent_progress` records in the main file.** During team phases, the main file shows a gap in records while teammates work in their subagent files.
+
+This means team subagent files cannot be linked from the main file via the normal `agent_progress → data.agentId → agent-{hash}.jsonl` path. The teammate subagent files exist in `{UUID}/subagents/` with standard hex naming but are not referenced from the main session's record chain.
+
+### Team-Specific Tools
+
+These tool names appear exclusively in agent teams sessions. They follow the standard `tool_use`/`tool_result` pattern documented in §Message Content Blocks.
+
+#### TeamCreate
+
+**Input:** `{"team_name": "agent-refactor", "description": "Parallel investigation..."}`
+
+**`toolUseResult`:**
+```json
+{
+  "team_name": "agent-refactor",
+  "team_file_path": "/home/user/.claude/teams/agent-refactor/config.json",
+  "lead_agent_id": "team-lead@agent-refactor"
+}
+```
+
+#### TeamDelete
+
+**Input:** `{}` (no parameters)
+
+**`toolUseResult` (success):**
+```json
+{"success": true, "message": "Cleaned up directories and worktrees for team \"agent-refactor\"", "team_name": "agent-refactor"}
+```
+
+**`toolUseResult` (failure — active members):**
+```json
+{"success": false, "message": "Cannot cleanup team with 1 active member(s): free-fn. Use requestShutdown to gracefully terminate teammates first.", "team_name": "stream-design"}
+```
+
+#### SendMessage
+
+**Input (message):** `{"type": "message", "recipient": "critic", "content": "...", "summary": "Cross-review findings"}`
+
+**Input (shutdown_request):** `{"type": "shutdown_request", "recipient": "architect", "content": "Investigation complete"}`
+
+`type` values: `"message"`, `"broadcast"`, `"shutdown_request"`, `"shutdown_response"`, `"plan_approval_response"`
+
+**`toolUseResult`:**
+```json
+{
+  "success": true,
+  "message": "Message sent to critic's inbox",
+  "routing": {
+    "sender": "team-lead",
+    "target": "@critic",
+    "targetColor": "yellow",
+    "summary": "Cross-review findings",
+    "content": "Full message text..."
+  }
+}
+```
+
+Shutdown request ID format: `shutdown-{unix_ms}@{recipient_name}`
+
+#### TaskCreate
+
+**Input:** `{"subject": "Analyze module coupling", "description": "Read all 6 files...", "activeForm": "Analyzing module coupling"}`
+
+#### TaskUpdate
+
+**Input:** `{"taskId": "1", "status": "in_progress"}` or `{"taskId": "4", "addBlockedBy": ["1", "2", "3"]}` or `{"taskId": "1", "owner": "architect"}`
+
+**`toolUseResult`:**
+```json
+{"success": true, "taskId": "4", "updatedFields": ["status"], "statusChange": {"from": "pending", "to": "in_progress"}}
+```
+
+`statusChange` is present only when status changed.
+
+#### TaskList
+
+**`toolUseResult`:**
+```json
+{
+  "tasks": [
+    {"id": "1", "subject": "Propose design", "status": "in_progress", "owner": "architect", "blockedBy": []},
+    {"id": "2", "subject": "Review design", "status": "pending", "blockedBy": ["1"]}
+  ]
+}
+```
+
+---
+
 ## Version History
 
-Observed client versions: `2.0.64` through `2.1.53`
+Observed client versions: `2.0.64` through `2.1.63`
 
 Notable changes by version:
-- **v2.1.38**: `sourceToolUseID` on meta user records, `isApiErrorMessage` assistant records
+- **v2.1.38**: `sourceToolUseID` on meta user records, `isApiErrorMessage` assistant records, `stop_hook_summary` system subtype, `caller` field on tool_use blocks
 - **v2.1.42**: `data.resume` on agent_progress
 - **v2.1.45**: `mcp_progress` type
 - **v2.1.50**: Agent hash length changed from 7-char to 17-char hex; acompact hash from 6-char to 16-char hex; new `message.usage` fields (`server_tool_use`, `inference_geo`, `iterations`, `speed`); new message fields (`context_management`, `container`)
+- **v2.1.63**: Agent teams support: `teamName` field, teammate-message user records, TeamCreate/TeamDelete/SendMessage/TaskCreate/TaskUpdate/TaskList tools, `teammate_spawned` Agent toolUseResult variant, no `agent_progress` for team subagents
 
 ---
 
@@ -726,4 +935,4 @@ This spec is reverse-engineered from observed JSONL data. Claude Code does not p
 - Mark unverifiable claims (e.g., record types with zero occurrences in local data)
 - Update this "Version History" section with notable changes per version
 
-**Last audited:** 2026-02-24 against versions 2.0.64–2.1.53
+**Last audited:** 2026-03-03 against versions 2.0.64–2.1.63 (agent teams audit from N=1 session)
