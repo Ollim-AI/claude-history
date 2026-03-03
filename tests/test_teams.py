@@ -3,12 +3,8 @@
 import json
 from pathlib import Path
 
-from claude_history.cli import (
-    TeammateMessage,
-    extract_user_prompts,
-    is_user_text_prompt,
-    parse_teammate_message,
-)
+from claude_history.chain import extract_user_prompts, is_user_text_prompt
+from claude_history.models import TeammateMessage, parse_teammate_message
 
 FIXTURE_PATH = Path(__file__).parent / "fixture_team_session.jsonl"
 
