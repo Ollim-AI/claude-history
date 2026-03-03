@@ -19,6 +19,7 @@ from claude_history.chain import (
     build_task_agent_map,
     extract_all_text,
     extract_all_tools,
+    extract_hook_text,
     extract_ordered_content,
     extract_user_prompts,
     get_full_response,
@@ -165,6 +166,7 @@ def cmd_response(args: argparse.Namespace) -> None:
     show_thinking = args.show_thinking
     show_tools = not args.hide_tools
     show_tool_results = args.show_tool_results
+    show_hooks = args.show_hooks
 
     # Fast UUID lookup: load non-progress records from all files (small data),
     # find which file has the UUID, then reload that file with progress stubs.
@@ -213,7 +215,7 @@ def cmd_response(args: argparse.Namespace) -> None:
 
     print(f"Response to: {cyan(user_record['uuid'][:8])} | {dim(ts_str)}\n")
 
-    blocks = extract_ordered_content(chain, records if show_tool_results else None)
+    blocks = extract_ordered_content(chain, records if (show_tool_results or show_hooks) else None)
     task_agent_map = build_task_agent_map(records) if show_tools else {}
 
     if not render_blocks(
@@ -222,6 +224,7 @@ def cmd_response(args: argparse.Namespace) -> None:
         show_thinking=show_thinking,
         show_tools=show_tools,
         show_tool_results=show_tool_results,
+        show_hooks=show_hooks,
     ):
         print("No content in response.")
 
@@ -352,6 +355,7 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     show_thinking = args.show_thinking
     show_tools = not args.hide_tools
     show_tool_results = args.show_tool_results
+    show_hooks = args.show_hooks
     show_system = getattr(args, "show_system", False)
 
     # Prompts-only doesn't need progress stubs (no chain traversal)
@@ -517,7 +521,7 @@ def cmd_transcript(args: argparse.Namespace) -> None:
             if not prompts_only:
                 chain = get_full_response(records, prompt.uuid)
                 if chain:
-                    blocks = extract_ordered_content(chain, records if show_tool_results else None)
+                    blocks = extract_ordered_content(chain, records if (show_tool_results or show_hooks) else None)
 
                     # Team phase separators
                     for block in blocks:
@@ -541,6 +545,7 @@ def cmd_transcript(args: argparse.Namespace) -> None:
                         show_thinking=show_thinking,
                         show_tools=show_tools,
                         show_tool_results=show_tool_results,
+                        show_hooks=show_hooks,
                     ):
                         print(dim("(no text content)"))
                         print()
@@ -573,7 +578,10 @@ def _render_session_line(session, use_iso: bool) -> str:
     if session.team_names:
         names = ", ".join(sorted(session.team_names))
         team_badge = f" | {yellow(f'[team: {names}]')}"
-    return f"{session_short} | {ts_str} | {yellow(prompt_count)} {prompt_word} | {yellow(window_count)} ctx{team_badge}{desc}"
+    hook_badge = ""
+    if session.hook_error_count:
+        hook_badge = f" | {yellow(f'[{session.hook_error_count} hook err]')}"
+    return f"{session_short} | {ts_str} | {yellow(prompt_count)} {prompt_word} | {yellow(window_count)} ctx{team_badge}{hook_badge}{desc}"
 
 
 def cmd_sessions(args: argparse.Namespace) -> None:
@@ -729,7 +737,8 @@ def search_records(
                 f"{t['name']} {format_tool_summary(t['name'], t['input'])}"
                 for t in tools
             )
-            full_text = f"{response_text} {tool_text}".strip()
+            hook_text = extract_hook_text(chain, records)
+            full_text = f"{response_text} {tool_text} {hook_text}".strip()
             if full_text and q in compare(full_text):
                 if ("r:" + uuid) not in seen:
                     seen.add("r:" + uuid)
@@ -937,6 +946,9 @@ def main() -> None:
         help="Include tool results (full detail, no truncation)",
     )
     response_parser.add_argument(
+        "--show-hooks", action="store_true", help="Show hook errors and context inline"
+    )
+    response_parser.add_argument(
         "--cwd", help="Working directory path to find project for"
     )
     response_parser.add_argument(
@@ -978,6 +990,9 @@ def main() -> None:
         "--show-tool-results",
         action="store_true",
         help="Include tool results (full detail, no truncation)",
+    )
+    transcript_parser.add_argument(
+        "--show-hooks", action="store_true", help="Show hook errors and context inline"
     )
     transcript_parser.add_argument(
         "--show-system",

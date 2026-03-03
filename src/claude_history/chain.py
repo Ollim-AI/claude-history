@@ -6,6 +6,7 @@ import re
 
 from claude_history.models import (
     DT_MIN,
+    HOOK_ERROR_RE,
     ContentBlock,
     ProgressStub,
     Prompt,
@@ -13,6 +14,7 @@ from claude_history.models import (
     ToolResultContent,
     ToolUseContent,
     extract_content_text,
+    extract_hook_contexts,
     parse_timestamp,
 )
 
@@ -303,6 +305,42 @@ def extract_all_thinking(chain: list[dict]) -> list[str]:
     for record in chain:
         thinking.extend(extract_thinking_from_response(record))
     return thinking
+
+
+def extract_hook_text(chain: list[dict], records: list[Record]) -> str:
+    """Extract searchable text from hook errors and hook contexts.
+
+    Collects hook error content from tool_result blocks in user records
+    that correspond to tool_use blocks in the chain, plus hook context
+    strings from assistant text blocks.
+    """
+    parts: list[str] = []
+
+    # Hook contexts from assistant text blocks
+    for record in chain:
+        text = extract_text_from_response(record)
+        if text and "<system-reminder>" in text:
+            parts.extend(extract_hook_contexts(text))
+
+    # Hook errors from tool_result blocks matching this chain's tool_use IDs
+    tool_use_ids: set[str] = set()
+    for record in chain:
+        message = record.get("message", {})
+        content = message.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    tool_id = block.get("id", "")
+                    if tool_id:
+                        tool_use_ids.add(tool_id)
+
+    if tool_use_ids:
+        tool_results = _collect_tool_results(records, tool_use_ids)
+        for tr in tool_results.values():
+            if tr.is_error and isinstance(tr.content, str) and HOOK_ERROR_RE.search(tr.content):
+                parts.append(tr.content)
+
+    return " ".join(parts)
 
 
 def _collect_tool_results(

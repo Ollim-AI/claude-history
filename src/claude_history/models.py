@@ -18,6 +18,27 @@ _GREEN = "\033[32m"
 
 BlockType = Literal["thinking", "text", "tool_use", "tool_result"]
 
+HOOK_ERROR_RE = re.compile(r"^(PreToolUse|PostToolUse):\w+ hook error:", re.MULTILINE)
+_HOOK_CONTEXT_RE = re.compile(
+    r"<system-reminder>\s*"
+    r"((?:PreToolUse|PostToolUse):\S+ hook additional context:.*?)"
+    r"\s*</system-reminder>",
+    re.DOTALL,
+)
+
+
+def extract_hook_contexts(text: str) -> list[str]:
+    """Extract hook context strings from <system-reminder> tags in text."""
+    return [m.group(1).strip() for m in _HOOK_CONTEXT_RE.finditer(text)]
+
+
+def is_hook_error_block(block: dict) -> bool:
+    """Check if a tool_result content block is a hook error."""
+    if block.get("type") != "tool_result" or not block.get("is_error"):
+        return False
+    text = block.get("content", "")
+    return isinstance(text, str) and HOOK_ERROR_RE.search(text) is not None
+
 
 @dataclass(frozen=True, slots=True)
 class ProgressStub:
@@ -69,6 +90,7 @@ class Session:
     slug: str | None = None
     first_prompt: tuple[datetime, str] | None = None
     team_names: set[str] = field(default_factory=set)
+    hook_error_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)

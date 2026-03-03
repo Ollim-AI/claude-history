@@ -12,9 +12,12 @@ from claude_history.models import (
     _GREEN,
     _RESET,
     _YELLOW,
+    HOOK_ERROR_RE,
     ContentBlock,
     ToolResultContent,
     ToolUseContent,
+    extract_hook_contexts,
+    strip_system_tags,
 )
 
 
@@ -149,6 +152,7 @@ def render_blocks(
     show_thinking: bool = False,
     show_tools: bool = True,
     show_tool_results: bool = False,
+    show_hooks: bool = False,
 ) -> bool:
     """Render content blocks with flag-controlled detail.
 
@@ -178,10 +182,18 @@ def render_blocks(
                 print(dim("---"))
             has_output = True
             assert isinstance(content, str)
+            # Extract hook contexts before stripping tags
+            if show_hooks:
+                for ctx in extract_hook_contexts(content):
+                    print(yellow("[hook context]"))
+                    print(yellow(ctx))
+                    print()
+            cleaned = strip_system_tags(content) if show_hooks else content.strip()
             if show_thinking:
                 print(cyan("[text]"))
-            print(content.strip())
-            print()
+            if cleaned:
+                print(cleaned)
+                print()
             prev_type = "text"
 
         elif block_type == "tool_use":
@@ -205,10 +217,20 @@ def render_blocks(
                 prev_type = "tool_use"
 
         elif block_type == "tool_result":
-            if show_tool_results:
+            if not show_tool_results and not show_hooks:
+                continue
+            assert isinstance(content, ToolResultContent)
+            is_hook_error = (
+                show_hooks
+                and content.is_error
+                and isinstance(content.content, str)
+                and HOOK_ERROR_RE.search(content.content) is not None
+            )
+            if show_tool_results or is_hook_error:
                 has_output = True
-                assert isinstance(content, ToolResultContent)
-                if content.is_error:
+                if is_hook_error:
+                    print(yellow("[hook error]"))
+                elif content.is_error:
                     print(yellow("[result] (error)"))
                 else:
                     print(dim("[result]"))

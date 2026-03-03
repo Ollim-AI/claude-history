@@ -12,6 +12,7 @@ from claude_history.models import (
     Record,
     Session,
     extract_content_text,
+    is_hook_error_block,
     parse_timestamp,
 )
 
@@ -149,6 +150,13 @@ def _accumulate_session_record(sess: Session, record: dict) -> None:
         return
     if record.get("isCompactSummary"):
         return
+
+    # Count hook errors in tool_result blocks
+    content = record.get("message", {}).get("content", [])
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and is_hook_error_block(block):
+                sess.hook_error_count += 1
 
     # Track implicit boundaries (null parent = new context window)
     if record.get("parentUuid") is None:
