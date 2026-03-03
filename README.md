@@ -85,6 +85,8 @@ The `transcript` and `response` commands support these flags:
 | `--show-thinking` | Include thinking blocks |
 | `--hide-tools` | Hide tool call blocks |
 | `--show-tool-results` | Include tool results (full detail, no truncation) |
+| `--show-hooks` | Show hook errors and hook context inline |
+| `--show-system` | Show team protocol messages (transcript only) |
 
 ### Options
 
@@ -92,6 +94,8 @@ The `transcript` and `response` commands support these flags:
 |--------|-------------|
 | `--page N` | Page number for sessions listing |
 | `--size N` | Sessions per page (default: 10) |
+| `--since WHEN` | Filter by time (e.g., `3d`, `1w`, `24h`, `today`, `2024-01-15`) |
+| `-t`, `--timestamps` | Show ISO timestamps instead of relative times |
 | `--cwd PATH` | Look up project for a different directory |
 | `--project PATH` | Directly specify project directory in `~/.claude/projects/` |
 

@@ -129,6 +129,7 @@ The lead's final context window typically contains the synthesis — merged conc
 | `transcript SESSION --prompts-only` | User prompts only (good for orientation) |
 | `transcript SESSION --show-thinking` | **Recommended**: + thinking blocks |
 | `transcript SESSION --show-tool-results` | Everything including tool results (no truncation) |
+| `transcript SESSION --show-hooks` | Show hook errors and hook context inline |
 | `transcript SESSION --hide-tools` | Text only (no tool calls) |
 | `transcript SESSION --show-system` | + team protocol messages (idle, shutdown) |
 
@@ -139,6 +140,7 @@ The lead's final context window typically contains the synthesis — merged conc
 | `response UUID` | Claude's response with tool calls |
 | `response UUID --show-thinking` | + thinking blocks |
 | `response UUID --show-tool-results` | + tool results (full detail) |
+| `response UUID --show-hooks` | Show hook errors and hook context inline |
 
 ### Subagent Commands
 
