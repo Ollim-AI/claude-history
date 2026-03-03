@@ -73,6 +73,10 @@ class Prompt:
     is_tool_result: bool
     has_assistant_child: bool
 
+    @property
+    def is_user_prompt(self) -> bool:
+        return self.has_assistant_child and not self.is_tool_result
+
 
 @dataclass(frozen=True, slots=True)
 class CompactBoundary:
@@ -1286,12 +1290,13 @@ def get_subagents(project_dir: Path) -> list[SubagentMetadata]:
 
 def render_blocks(
     blocks: list[ContentBlock],
-    verbosity: int,
     task_agent_map: dict[str, str],
     *,
-    label_text: bool = False,
+    show_thinking: bool = False,
+    show_tools: bool = True,
+    show_tool_results: bool = False,
 ) -> bool:
-    """Render content blocks with verbosity-controlled detail.
+    """Render content blocks with flag-controlled detail.
 
     Returns True if any content was printed.
     """
@@ -1302,12 +1307,12 @@ def render_blocks(
         content = block.content
 
         if block_type == "thinking":
-            if verbosity >= 2:
+            if show_thinking:
                 has_output = True
                 assert isinstance(content, str)
                 text = content.strip()
                 print(dim("[thinking]"))
-                if verbosity >= 3 or len(text) <= 2000:
+                if show_tool_results or len(text) <= 2000:
                     print(dim(text))
                 else:
                     print(dim(text[:2000] + "\n... (truncated)"))
@@ -1319,19 +1324,19 @@ def render_blocks(
                 print(dim("---"))
             has_output = True
             assert isinstance(content, str)
-            if label_text:
+            if show_thinking:
                 print(cyan("[text]"))
             print(content.strip())
             print()
             prev_type = "text"
 
         elif block_type == "tool_use":
-            if verbosity >= 1:
+            if show_tools:
                 has_output = True
                 assert isinstance(content, ToolUseContent)
                 agent_id = task_agent_map.get(content.id)
                 agent_suffix = f"  {dim(f'-> agent-{agent_id}')}" if agent_id else ""
-                if verbosity == 1:
+                if not show_tool_results:
                     summary = format_tool_summary(content.name, content.input)
                     summary_display = (
                         f" {dim(truncate_text(summary, 80))}" if summary else ""
@@ -1340,26 +1345,29 @@ def render_blocks(
                 else:
                     print(green(f"[tool] {content.name}") + agent_suffix)
                     input_str = json.dumps(content.input, indent=2)
-                    if verbosity < 3 and len(input_str) > 500:
-                        input_str = input_str[:500] + dim("\n... (truncated)")
                     for line in input_str.split("\n"):
                         print(f"  {line}")
                     print()
                 prev_type = "tool_use"
 
         elif block_type == "tool_result":
-            has_output = True
-            assert isinstance(content, ToolResultContent)
-            if content.is_error:
-                print(yellow("[result] (error)"))
-            else:
-                print(dim("[result]"))
-            if isinstance(content.content, str):
-                print(dim(content.content) if not content.is_error else content.content)
-            else:
-                print(dim(json.dumps(content.content, indent=2)))
-            print()
-            prev_type = "tool_result"
+            if show_tool_results:
+                has_output = True
+                assert isinstance(content, ToolResultContent)
+                if content.is_error:
+                    print(yellow("[result] (error)"))
+                else:
+                    print(dim("[result]"))
+                if isinstance(content.content, str):
+                    print(
+                        dim(content.content)
+                        if not content.is_error
+                        else content.content
+                    )
+                else:
+                    print(dim(json.dumps(content.content, indent=2)))
+                print()
+                prev_type = "tool_result"
 
     return has_output
 
@@ -1380,169 +1388,6 @@ def resolve_project_dir(args: argparse.Namespace) -> Path:
     sys.exit(1)
 
 
-def _is_system_prompt(prompt: Prompt) -> bool:
-    """Check if a prompt is system-injected (not user-typed)."""
-    if prompt.has_assistant_child and not prompt.is_tool_result:
-        return False
-    return True
-
-
-def _filter_prompts(
-    prompt_list: list[Prompt] | tuple[Prompt, ...], verbose: bool
-) -> list[Prompt]:
-    """Filter prompts based on verbosity — verbose includes system prompts."""
-    if verbose:
-        return list(prompt_list)
-    return [p for p in prompt_list if not _is_system_prompt(p)]
-
-
-def _format_prompt_line(prompt: Prompt, verbose: bool, use_iso: bool) -> str:
-    """Format a single prompt for display."""
-    ts_str = (
-        dim(format_time(prompt.timestamp, use_iso=use_iso))
-        if prompt.timestamp
-        else dim("unknown time")
-    )
-    uuid_short = cyan(prompt.uuid[:8])
-    text = truncate_text(prompt.text)
-    prefix = dim("[system] ") if verbose and _is_system_prompt(prompt) else ""
-    return f'{uuid_short} | {ts_str}\n  {prefix}"{text}"'
-
-
-def cmd_prompts(args: argparse.Namespace) -> None:
-    """Handle the 'prompts' command.
-
-    Default: Only user-typed prompts (excludes tool_result responses)
-    -v: Show all prompts including tool_result responses
-    """
-    project_dir = resolve_project_dir(args)
-
-    # Identifier is required (session UUID prefix or prompt UUID)
-    if not args.identifier:
-        print("Error: Session ID or prompt UUID required.")
-        print("Usage: prompts <session-prefix>       - List prompts in session")
-        print(
-            "       prompts <session-prefix>:N     - List prompts in context window N"
-        )
-        print(
-            "       prompts prev                   - Previous session (prev-2, prev-3, ...)"
-        )
-        print("       prompts <prompt-uuid>          - Show full prompt text")
-        sys.exit(1)
-
-    verbose = getattr(args, "verbose", False)
-
-    target, compaction_index = resolve_session_ref(args.identifier, project_dir)
-
-    # Try selective file loading first (no progress stubs needed for prompts)
-    records = get_session_conversations(
-        project_dir, target, include_progress_stubs=False
-    )
-    if records is not None:
-        sessions = get_sessions(records)
-        matching_sessions = [s for s in sessions if s.session_id.startswith(target)]
-    else:
-        # Fallback: load all files (e.g. for prompt UUID lookup)
-        records = get_all_conversations(project_dir, include_progress_stubs=False)
-        sessions = get_sessions(records)
-        matching_sessions = [s for s in sessions if s.session_id.startswith(target)]
-
-    prompts = extract_user_prompts(records)
-
-    if matching_sessions:
-        # Show prompts for this session
-        session = matching_sessions[0]
-        session_id = session.session_id
-
-        # Get compactions for this session
-        compactions = get_compactions(records, session_id)
-
-        # If specific compaction index requested
-        if compaction_index is not None:
-            if compaction_index < 0 or compaction_index >= len(compactions):
-                print(
-                    f"Error: Compaction index {compaction_index} out of range (0-{len(compactions) - 1})"
-                )
-                sys.exit(1)
-
-            compaction = compactions[compaction_index]
-            filtered = _filter_prompts(compaction.prompts, verbose)
-            print(
-                f"Session: {cyan(session_id[:8])} | Context window {yellow(compaction_index)} ({yellow(len(filtered))} prompts)\n"
-            )
-
-            for prompt in filtered:
-                print(_format_prompt_line(prompt, verbose, args.timestamps))
-                print()
-            if filtered:
-                print(dim(f"  > response {filtered[0].uuid[:8]}"))
-            return
-
-        # If session has 2+ compactions, show compaction list
-        if len(compactions) >= 2:
-            window_count = len(compactions)
-            filtered_total = sum(
-                len(_filter_prompts(c.prompts, verbose)) for c in compactions
-            )
-            print(
-                f"Session: {cyan(session_id[:8])} ({yellow(filtered_total)} prompts across {yellow(window_count)} context windows)\n"
-            )
-
-            for i, compaction in enumerate(compactions):
-                start_str = format_local(compaction.start_time, "%Y-%m-%d %H:%M", "?")
-                end_str = format_local(compaction.end_time, "%H:%M", "?")
-                user_prompts = _filter_prompts(compaction.prompts, verbose)
-                filtered_count = len(user_prompts)
-                time_range = dim(f"{start_str} - {end_str}")
-
-                print(
-                    f"{cyan_bold(f'[{i}]')} {time_range} | {yellow(filtered_count)} prompts"
-                )
-
-                # Show first 3 user-typed prompts
-                for prompt in user_prompts[:3]:
-                    preview = truncate_text(prompt.text, 100)
-                    print(f'    "{preview}"')
-
-                # Show "... N more" if there are more
-                remaining = filtered_count - 3
-                if remaining > 0:
-                    print(dim(f"    ... {remaining} more"))
-
-                print()
-
-            print(dim(f"  > prompts {session_id[:8]}:0"))
-            return
-
-        # Otherwise show prompts directly (0-1 compactions)
-        session_prompts = [p for p in prompts if p.session_id == session_id]
-        session_prompts.sort(key=lambda x: x.timestamp or DT_MIN)
-        filtered = _filter_prompts(session_prompts, verbose)
-
-        print(f"Session: {cyan(session_id[:8])} ({yellow(len(filtered))} prompts)\n")
-
-        for prompt in filtered:
-            print(_format_prompt_line(prompt, verbose, args.timestamps))
-            print()
-        if filtered:
-            print(dim(f"  > response {filtered[0].uuid[:8]}"))
-        return
-
-    # No session match, try prompt UUID
-    matching_prompts = [p for p in prompts if p.uuid.startswith(target)]
-    if not matching_prompts:
-        print(f"Error: No session or prompt found with ID starting with '{target}'")
-        sys.exit(1)
-
-    prompt = matching_prompts[0]
-    ts_str = format_local(prompt.timestamp, default="unknown time")
-    print(f"Session: {cyan(prompt.session_id[:8])}")
-    print(f"Time: {dim(ts_str)}")
-    print(f"UUID: {cyan(prompt.uuid)}")
-    print(f"\n{prompt.text}")
-    uuid_short = prompt.uuid[:8]
-    print(f"\n{dim(f'  > response {uuid_short}')}")
-
 
 def cmd_response(args: argparse.Namespace) -> None:
     """Handle the 'response' command with verbosity levels.
@@ -1555,7 +1400,9 @@ def cmd_response(args: argparse.Namespace) -> None:
     project_dir = resolve_project_dir(args)
 
     target_uuid = args.uuid
-    verbosity = getattr(args, "verbose", 0) or 0
+    show_thinking = args.show_thinking
+    show_tools = not args.hide_tools
+    show_tool_results = args.show_tool_results
 
     # Fast UUID lookup: load non-progress records from all files (small data),
     # find which file has the UUID, then reload that file with progress stubs.
@@ -1604,41 +1451,26 @@ def cmd_response(args: argparse.Namespace) -> None:
 
     print(f"Response to: {cyan(user_record['uuid'][:8])} | {dim(ts_str)}\n")
 
-    # Get ordered content blocks (include tool results at -vvv)
-    if verbosity >= 3:
+    # Get ordered content blocks (include tool results when requested)
+    if show_tool_results:
         blocks = extract_ordered_content(chain, records)
     else:
         blocks = extract_ordered_content(chain)
     task_agent_map = build_task_agent_map(records)
 
-    if verbosity == 0:
-        # Default: text only, no labels
-        text_blocks = [
-            b.content.strip()
-            for b in blocks
-            if b.type == "text" and isinstance(b.content, str)
-        ]
-        if text_blocks:
-            print(f"\n{dim('---')}\n".join(text_blocks))
-        else:
-            tool_count = sum(1 for b in blocks if b.type == "tool_use")
-            print("No text content in response.")
-            if tool_count:
-                print(
-                    f"Response contains {yellow(tool_count)} tool call(s). Use -v to view."
-                )
-        print()
-    else:
-        # -v, -vv, or -vvv: interleaved output with labels
-        if not render_blocks(
-            blocks, verbosity, task_agent_map, label_text=verbosity >= 2
-        ):
-            print("No content in response.")
+    if not render_blocks(
+        blocks,
+        task_agent_map,
+        show_thinking=show_thinking,
+        show_tools=show_tools,
+        show_tool_results=show_tool_results,
+    ):
+        print("No content in response.")
 
     # Next-action hint
     session_id = user_record.get("sessionId", "")
     if session_id:
-        print(dim(f"  > prompts {session_id[:8]}"))
+        print(dim(f"  > transcript {session_id[:8]}"))
 
 
 def cmd_subagents(args: argparse.Namespace) -> None:
@@ -1745,23 +1577,29 @@ def cmd_subagents(args: argparse.Namespace) -> None:
 def cmd_transcript(args: argparse.Namespace) -> None:
     """Handle the 'transcript' command.
 
-    Default: user prompts + assistant text only
-    -v: + tool calls
-    -vv: + thinking blocks
-    -vvv: + tool results, no truncation
+    Default: prompts + responses + tool calls
+    --prompts-only: only user prompts
+    --show-thinking: + thinking blocks
+    --hide-tools: hide tool calls
+    --show-tool-results: + tool results (full detail, no truncation)
     """
     project_dir = resolve_project_dir(args)
 
     session_prefix, window_idx = resolve_session_ref(args.identifier, project_dir)
 
-    verbosity = getattr(args, "verbose", 0) or 0
+    prompts_only = args.prompts_only
+    show_thinking = args.show_thinking
+    show_tools = not args.hide_tools
+    show_tool_results = args.show_tool_results
 
-    # Try selective file loading (transcript needs progress stubs for chain traversal)
+    # Prompts-only doesn't need progress stubs (no chain traversal)
     records = get_session_conversations(
-        project_dir, session_prefix, include_progress_stubs=True
+        project_dir, session_prefix, include_progress_stubs=not prompts_only
     )
     if records is None:
-        records = get_all_conversations(project_dir)
+        records = get_all_conversations(
+            project_dir, include_progress_stubs=not prompts_only
+        )
     sessions = get_sessions(records)
 
     # Find matching session
@@ -1780,6 +1618,35 @@ def cmd_transcript(args: argparse.Namespace) -> None:
         print("Error: Session has no context windows")
         sys.exit(1)
 
+    # Prompts-only with multiple windows and no specific index: compact listing
+    if prompts_only and len(compactions) >= 2 and window_idx is None:
+        # Pre-filter once per compaction, accumulate total
+        window_prompts = [
+            [p for p in c.prompts if p.is_user_prompt] for c in compactions
+        ]
+        total = sum(len(wp) for wp in window_prompts)
+        print(
+            f"Session: {cyan(session_id[:8])} ({yellow(total)} prompts across {yellow(len(compactions))} context windows)\n"
+        )
+        for i, (compaction, user_prompts) in enumerate(
+            zip(compactions, window_prompts)
+        ):
+            start_str = format_local(compaction.start_time, "%Y-%m-%d %H:%M", "?")
+            end_str = format_local(compaction.end_time, "%H:%M", "?")
+            time_range = dim(f"{start_str} - {end_str}")
+            print(
+                f"{cyan_bold(f'[{i}]')} {time_range} | {yellow(len(user_prompts))} prompts"
+            )
+            for prompt in user_prompts[:3]:
+                preview = truncate_text(prompt.text, 100)
+                print(f'    "{preview}"')
+            remaining = len(user_prompts) - 3
+            if remaining > 0:
+                print(dim(f"    ... {remaining} more"))
+            print()
+        print(dim(f"  > transcript {session_id[:8]}:0 --prompts-only"))
+        return
+
     # Determine which windows to render
     if window_idx is not None:
         if window_idx < 0 or window_idx >= len(compactions):
@@ -1791,16 +1658,17 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     else:
         windows = list(enumerate(compactions))
 
-    # Build Task->subagent map once
-    task_agent_map = build_task_agent_map(records)
+    # Build Task->subagent map once (not needed for prompts-only)
+    task_agent_map = {} if prompts_only else build_task_agent_map(records)
 
     if len(windows) > 1:
         print(f"Session: {cyan(session_id[:8])} ({len(windows)} context windows)\n")
 
     for wi, compaction in windows:
-        prompts = compaction.prompts
         user_prompts = [
-            p for p in prompts if p.has_assistant_child and not p.is_tool_result
+            p
+            for p in compaction.prompts
+            if p.is_user_prompt
         ]
 
         # Print header per window
@@ -1821,23 +1689,27 @@ def cmd_transcript(args: argparse.Namespace) -> None:
             print(prompt.text)
             print()
 
-            chain = get_full_response(records, prompt.uuid)
-            if chain:
-                if verbosity >= 3:
-                    blocks = extract_ordered_content(chain, records)
-                else:
-                    blocks = extract_ordered_content(chain)
+            if not prompts_only:
+                chain = get_full_response(records, prompt.uuid)
+                if chain:
+                    if show_tool_results:
+                        blocks = extract_ordered_content(chain, records)
+                    else:
+                        blocks = extract_ordered_content(chain)
 
-                print(green("[assistant]"))
-                if not render_blocks(blocks, verbosity, task_agent_map):
-                    print(dim("(no text content)"))
-                    print()
+                    print(green("[assistant]"))
+                    if not render_blocks(
+                        blocks,
+                        task_agent_map,
+                        show_thinking=show_thinking,
+                        show_tools=show_tools,
+                        show_tool_results=show_tool_results,
+                    ):
+                        print(dim("(no text content)"))
+                        print()
 
-            print(dim("---"))
-            print()
-
-    # Next-action hint
-    print(dim(f"  > prompts {session_id[:8]}"))
+                print(dim("---"))
+                print()
 
 
 def _render_session_line(session: Session, use_iso: bool) -> str:
@@ -1911,7 +1783,7 @@ def cmd_sessions(args: argparse.Namespace) -> None:
             print(f"Page {page}/{total_pages}.")
     if page_sessions:
         first_id = page_sessions[0].session_id[:8]
-        print(dim(f"  > prompts {first_id}"))
+        print(dim(f"  > transcript {first_id}"))
 
 
 def prefilter_files(
@@ -1987,7 +1859,7 @@ def search_records(
 
     prompts = extract_user_prompts(records)
     # Filter to user-typed prompts only
-    prompts = [p for p in prompts if p.has_assistant_child and not p.is_tool_result]
+    prompts = [p for p in prompts if p.is_user_prompt]
 
     for prompt in prompts:
         prompt_text = prompt.text
@@ -2084,7 +1956,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         print(f'Sessions matching "{query}":\n')
         for sid in session_matches:
             print(f"  {cyan(sid[:8])}")
-        print(f"\n{dim('  > prompts ' + session_matches[0][:8])}\n")
+        print(f"\n{dim('  > transcript ' + session_matches[0][:8])}\n")
 
     if not matches:
         return
@@ -2207,43 +2079,21 @@ def main() -> None:
         "--since", help="Show sessions since (e.g., 3d, 1w, 24h, today, 2024-01-15)"
     )
 
-    # prompts command
-    prompts_parser = subparsers.add_parser(
-        "prompts", help="List prompts in a session or show full prompt by UUID"
-    )
-    prompts_parser.add_argument(
-        "identifier", nargs="?", help="Session ID prefix or prompt UUID"
-    )
-    prompts_parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Show all prompts including tool results",
-    )
-    prompts_parser.add_argument(
-        "--cwd", help="Working directory path to find project for"
-    )
-    prompts_parser.add_argument(
-        "--project", help="Direct project directory path in ~/.claude/projects/"
-    )
-
     # response command
-    prompts_parser.add_argument(
-        "-t",
-        "--timestamps",
-        action="store_true",
-        help="Show ISO timestamps instead of relative times",
-    )
     response_parser = subparsers.add_parser(
         "response", help="Read Claude's response for a prompt"
     )
     response_parser.add_argument("uuid", help="Prompt UUID (or prefix)")
     response_parser.add_argument(
-        "-v",
-        "--verbose",
-        action="count",
-        default=0,
-        help="Verbosity: -v for text+tools, -vv for thinking+text+tools",
+        "--show-thinking", action="store_true", help="Include thinking blocks"
+    )
+    response_parser.add_argument(
+        "--hide-tools", action="store_true", help="Hide tool call blocks"
+    )
+    response_parser.add_argument(
+        "--show-tool-results",
+        action="store_true",
+        help="Include tool results (full detail, no truncation)",
     )
     response_parser.add_argument(
         "--cwd", help="Working directory path to find project for"
@@ -2273,11 +2123,20 @@ def main() -> None:
         help="Session ID, prev/prev-N, or session:window (e.g., prev, 977a21c6:0)",
     )
     transcript_parser.add_argument(
-        "-v",
-        "--verbose",
-        action="count",
-        default=0,
-        help="Verbosity: -v for text+tools, -vv for thinking+text+tools, -vvv for full with results",
+        "--prompts-only",
+        action="store_true",
+        help="Show only user prompts (no assistant responses)",
+    )
+    transcript_parser.add_argument(
+        "--show-thinking", action="store_true", help="Include thinking blocks"
+    )
+    transcript_parser.add_argument(
+        "--hide-tools", action="store_true", help="Hide tool call blocks"
+    )
+    transcript_parser.add_argument(
+        "--show-tool-results",
+        action="store_true",
+        help="Include tool results (full detail, no truncation)",
     )
     transcript_parser.add_argument(
         "--cwd", help="Working directory path to find project for"
@@ -2324,7 +2183,6 @@ def main() -> None:
 
     commands = {
         "sessions": cmd_sessions,
-        "prompts": cmd_prompts,
         "response": cmd_response,
         "subagents": cmd_subagents,
         "transcript": cmd_transcript,

@@ -22,7 +22,7 @@ Start with one of these discovery methods depending on what you know:
 |--------------|---------|---------|
 | A topic or keyword | `search QUERY` | Find sessions mentioning the topic |
 | Rough timeframe | `sessions --since 3d` | Filter sessions by time range |
-| "What did we just do?" | `prompts prev` | See user prompts from last session |
+| "What did we just do?" | `transcript prev --prompts-only` | See user prompts from last session |
 
 **Scoping by time range:** Use `--since` to filter by time. Works on both `sessions` and `search`. Accepts:
 - Relative: `3d` (days), `1w` (weeks), `24h` (hours), `30m` (minutes — not months)
@@ -38,21 +38,21 @@ Discovery gives you **session IDs** to investigate. It does not give you underst
 Once you have a session ID, **read the full transcript** to understand what happened:
 
 ```bash
-# Start with prompts to get the shape of the session
-claude-history prompts SESSION_ID
+# Default shows prompts + responses + tool calls
+claude-history transcript SESSION_ID
 
-# Then read the full transcript — this is where understanding comes from
-claude-history transcript SESSION_ID -vv
+# Add --show-thinking to see Claude's reasoning behind decisions
+claude-history transcript SESSION_ID --show-thinking
 ```
 
-Use `-vv` to see thinking + text + tool calls, which reveals the reasoning behind decisions. For sessions with multiple context windows, read each one:
+For sessions with multiple context windows, read each one:
 
 ```bash
-claude-history transcript SESSION_ID:0 -vv
-claude-history transcript SESSION_ID:1 -vv
+claude-history transcript SESSION_ID:0 --show-thinking
+claude-history transcript SESSION_ID:1 --show-thinking
 ```
 
-**Read the entire transcript of important sessions.** Skimming prompts alone misses the actual work — file edits, debugging steps, architectural decisions, and implementation details all live in the transcript body.
+Use `--prompts-only` for a quick orientation before deep reading. **But always read the full transcript** — prompts show what was *requested*, the transcript body reveals the actual work: file edits, debugging steps, architectural decisions.
 
 ### Step 3: Follow threads when needed
 
@@ -76,7 +76,7 @@ After reading transcripts, summarize what was actually accomplished — not what
 
 2. **Search-only investigation.** Running `search "keyword"` returns snippets with session IDs. These snippets are breadcrumbs, not answers. You must follow up by reading the full transcript of matching sessions to understand the context around each match.
 
-3. **Reading only prompts.** User prompts show what was *requested*, not what was *done*. The transcript body contains the actual work: files edited, code written, bugs found, decisions made. Always read transcripts, not just prompts.
+3. **Reading only prompts.** User prompts show what was *requested*, not what was *done*. The transcript body contains the actual work: files edited, code written, bugs found, decisions made. Always read full transcripts, not just `--prompts-only`.
 
 ## Command Reference
 
@@ -95,21 +95,20 @@ After reading transcripts, summarize what was actually accomplished — not what
 
 | Command | Description |
 |---------|-------------|
-| `prompts SESSION` | User-typed prompts in a session (good for orientation) |
-| `prompts -v SESSION` | All messages including system/tool results |
-| `transcript SESSION` | Full conversation (all context windows) |
+| `transcript SESSION` | Full conversation: prompts + responses + tool calls |
 | `transcript SESSION:N` | Single context window (0-indexed) |
-| `transcript -vv SESSION` | **Recommended**: thinking + text + tool calls |
-| `transcript -vvv SESSION` | Everything including tool results (no truncation) |
+| `transcript SESSION --prompts-only` | User prompts only (good for orientation) |
+| `transcript SESSION --show-thinking` | **Recommended**: + thinking blocks |
+| `transcript SESSION --show-tool-results` | Everything including tool results (no truncation) |
+| `transcript SESSION --hide-tools` | Text only (no tool calls) |
 
 ### Individual Response Commands
 
 | Command | Description |
 |---------|-------------|
-| `response UUID` | Claude's text reply for one prompt |
-| `response -v UUID` | Text + tool calls |
-| `response -vv UUID` | Thinking + text + tool calls |
-| `prompts UUID` | Full text of a truncated prompt |
+| `response UUID` | Claude's response with tool calls |
+| `response UUID --show-thinking` | + thinking blocks |
+| `response UUID --show-tool-results` | + tool results (full detail) |
 
 ### Subagent Commands
 

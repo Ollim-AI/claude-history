@@ -1,72 +1,121 @@
-# claude-history
+# Claude History
 
-CLI navigator for Claude Code conversation history. Browse sessions, search
-across conversations, read transcripts, and inspect subagent activity.
+Navigate Claude Code conversation histories from the command line. Browse sessions, read transcripts, inspect responses and subagents.
 
-Also ships as a **Claude Code skill** — Claude can investigate its own past
-sessions.
+## Installation
 
-## Install
+### Claude Code Skill
 
-### CLI tool (global)
-
-```bash
-uv tool install claude-history@git+https://github.com/Ollim-AI/claude-history.git
-```
-
-### Claude Code skill
-
-Clone into your personal skills directory:
+Clone into your Claude Code skills directory:
 
 ```bash
 git clone https://github.com/Ollim-AI/claude-history.git ~/.claude/skills/claude-history
 ```
 
-Claude Code will discover it automatically. Use `/claude-history` in any session.
+This makes the skill available as `/claude-history` in Claude Code conversations.
+
+### CLI Command
+
+Requires [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv tool install --editable ~/.claude/skills/claude-history
+```
+
+This installs `claude-history` on your PATH. Editable mode means changes to the source are picked up immediately.
+
+Verify:
+
+```bash
+claude-history sessions
+```
+
+### Preserve History
+
+Claude Code deletes session history after 30 days by default. To keep older sessions accessible, increase `cleanupPeriodDays` in `~/.claude/settings.json`:
+
+```json
+{
+  "cleanupPeriodDays": 365
+}
+```
+
+> **Note:** Heavy Claude Code usage can accumulate significant storage in `~/.claude/projects/`. Adjust the retention period to suit your needs.
 
 ## Usage
 
-```bash
-claude-history sessions                        # List recent sessions
-claude-history sessions --since 3d             # Sessions from last 3 days
-claude-history prompts <session>               # List prompts in a session
-claude-history response <uuid>                 # Show Claude's response
-claude-history transcript <session>            # Full conversation
-claude-history transcript <session> -v         # Include tool calls
-claude-history search "error handling"         # Search across all sessions
-claude-history search -p "deploy" --since 7d   # Search prompts only, recent
-claude-history subagents                       # List subagent transcripts
+```
+claude-history <command> [options]
 ```
 
-### Working directory
+### Commands
 
-By default, `claude-history` reads history for the current working directory.
-Use `--cwd` to target a different project:
+| Command | Description |
+|---------|-------------|
+| `sessions` | List recent sessions with prompt and context window counts |
+| `transcript SESSION` | Full conversation: prompts + responses + tool calls |
+| `transcript SESSION:N` | Transcript for a specific context window |
+| `transcript SESSION --prompts-only` | View user prompts only |
+| `response UUID` | Read Claude's response to a prompt |
+| `search QUERY` | Search for text across all sessions (prompts + responses) |
+| `search -p QUERY` | Search prompts only (faster) |
+| `subagents` | List subagent threads with model, duration, and errors |
+| `subagents AGENT_ID` | Detail view: prompt, tool timeline, tokens, errors |
+
+### Session References
+
+Anywhere a `SESSION` is accepted, you can use `prev` to reference recent sessions instead of a UUID prefix:
+
+| Reference | Resolves to |
+|-----------|-------------|
+| `prev` or `prev-1` | Previous session |
+| `prev-2` | Two sessions ago |
+| `prev-N` | N sessions ago |
+
+Append `:N` for a specific context window: `prev-2:0`
+
+### Display Flags
+
+The `transcript` and `response` commands support these flags:
+
+| Flag | Effect |
+|------|--------|
+| *(default)* | Prompts + responses + tool calls |
+| `--prompts-only` | User prompts only (transcript only) |
+| `--show-thinking` | Include thinking blocks |
+| `--hide-tools` | Hide tool call blocks |
+| `--show-tool-results` | Include tool results (full detail, no truncation) |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--page N` | Page number for sessions listing |
+| `--size N` | Sessions per page (default: 10) |
+| `--cwd PATH` | Look up project for a different directory |
+| `--project PATH` | Directly specify project directory in `~/.claude/projects/` |
+
+### Example Workflow
 
 ```bash
-claude-history sessions --cwd ~/my-project
+# Search across all sessions for a topic
+claude-history search "authentication"
+
+# List recent sessions
+claude-history sessions
+
+# View prompts from the previous session
+claude-history transcript prev --prompts-only
+
+# Full transcript (prompts + responses + tool calls)
+claude-history transcript 9aaedc03
+
+# Drill into a specific context window with thinking
+claude-history transcript 9aaedc03:0 --show-thinking
+
+# Read Claude's response to a specific prompt
+claude-history response 1240dbfc
+
+# Full transcript from 2 sessions ago, text only
+claude-history transcript prev-2 --hide-tools
 ```
-
-### Verbosity
-
-`response` and `transcript` support escalating verbosity:
-
-| Flag | Shows |
-|------|-------|
-| (none) | Text only |
-| `-v` | Text + tool calls |
-| `-vv` | Text + tools + thinking |
-| `-vvv` | Full detail + tool results |
-
-## How it works
-
-Claude Code stores conversation history as JSONL files in
-`~/.claude/projects/`. Each project directory contains session files that
-record every message, tool call, and response. `claude-history` parses these
-files and presents them in a navigable format.
-
-See [SPEC.md](SPEC.md) for the full JSONL format specification.
-
-## License
-
-[MIT](LICENSE.md)
