@@ -1451,12 +1451,8 @@ def cmd_response(args: argparse.Namespace) -> None:
 
     print(f"Response to: {cyan(user_record['uuid'][:8])} | {dim(ts_str)}\n")
 
-    # Get ordered content blocks (include tool results when requested)
-    if show_tool_results:
-        blocks = extract_ordered_content(chain, records)
-    else:
-        blocks = extract_ordered_content(chain)
-    task_agent_map = build_task_agent_map(records)
+    blocks = extract_ordered_content(chain, records if show_tool_results else None)
+    task_agent_map = build_task_agent_map(records) if show_tools else {}
 
     if not render_blocks(
         blocks,
@@ -1692,10 +1688,7 @@ def cmd_transcript(args: argparse.Namespace) -> None:
             if not prompts_only:
                 chain = get_full_response(records, prompt.uuid)
                 if chain:
-                    if show_tool_results:
-                        blocks = extract_ordered_content(chain, records)
-                    else:
-                        blocks = extract_ordered_content(chain)
+                    blocks = extract_ordered_content(chain, records if show_tool_results else None)
 
                     print(green("[assistant]"))
                     if not render_blocks(
