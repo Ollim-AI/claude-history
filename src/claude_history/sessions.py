@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 
 from claude_history.chain import extract_user_prompts
@@ -188,14 +190,10 @@ def _accumulate_session_record(sess: Session, record: dict) -> None:
                 sess.first_prompt = (dt, prompt_text)
 
 
-def get_sessions(records: list[Record]) -> list[Session]:
-    """Extract session metadata from conversation records.
-
-    Groups records by sessionId and returns metadata for each session.
-    Only counts user messages with actual text content (not tool_result messages).
-    """
-    sessions: dict[str, Session] = {}
-
+def _accumulate_records(
+    records: Iterable[Record], sessions: dict[str, Session]
+) -> None:
+    """Accumulate records into session metadata dict."""
     for record in records:
         if isinstance(record, ProgressStub):
             continue
@@ -206,11 +204,22 @@ def get_sessions(records: list[Record]) -> list[Session]:
             sessions[session_id] = Session(session_id=session_id)
         _accumulate_session_record(sessions[session_id], record)
 
-    # Sort by latest activity descending
+
+def _sorted_sessions(sessions: dict[str, Session]) -> list[Session]:
     session_list = list(sessions.values())
     session_list.sort(key=lambda x: x.latest_timestamp or DT_MIN, reverse=True)
-
     return session_list
+
+
+def get_sessions(records: list[Record]) -> list[Session]:
+    """Extract session metadata from conversation records.
+
+    Groups records by sessionId and returns metadata for each session.
+    Only counts user messages with actual text content (not tool_result messages).
+    """
+    sessions: dict[str, Session] = {}
+    _accumulate_records(records, sessions)
+    return _sorted_sessions(sessions)
 
 
 def get_sessions_from_dir(project_dir: Path) -> list[Session]:
@@ -230,18 +239,8 @@ def get_sessions_from_dir(project_dir: Path) -> list[Session]:
 
     with ThreadPoolExecutor(max_workers=min(8, len(files))) as executor:
         for file_records in executor.map(
-            lambda f: parse_jsonl_file(f, include_progress_stubs=False), files
+            partial(parse_jsonl_file, include_progress_stubs=False), files
         ):
-            for record in file_records:
-                if isinstance(record, ProgressStub):
-                    continue
-                session_id = record.get("sessionId", "unknown")
-                if session_id == "unknown":
-                    continue
-                if session_id not in sessions:
-                    sessions[session_id] = Session(session_id=session_id)
-                _accumulate_session_record(sessions[session_id], record)
+            _accumulate_records(file_records, sessions)
 
-    session_list = list(sessions.values())
-    session_list.sort(key=lambda x: x.latest_timestamp or DT_MIN, reverse=True)
-    return session_list
+    return _sorted_sessions(sessions)
