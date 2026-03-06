@@ -127,9 +127,12 @@ def get_all_conversations(
                 record["_source_file"] = filepath.name
         return file_records
 
-    # Parse files in parallel
+    if not jsonl_files:
+        return []
+
+    # Parse files in parallel (capped at 8 workers to bound memory)
     records = []
-    with ThreadPoolExecutor(max_workers=len(jsonl_files)) as executor:
+    with ThreadPoolExecutor(max_workers=min(8, len(jsonl_files))) as executor:
         for file_records in executor.map(parse_with_source, jsonl_files):
             records.extend(file_records)
 

@@ -60,7 +60,7 @@ from claude_history.render import (
     truncate_text,
     yellow,
 )
-from claude_history.sessions import get_compactions, get_sessions
+from claude_history.sessions import get_compactions, get_sessions, get_sessions_from_dir
 
 
 def parse_since(value: str) -> datetime:
@@ -588,9 +588,8 @@ def cmd_sessions(args: argparse.Namespace) -> None:
     """Handle the 'sessions' command."""
     project_dir = resolve_project_dir(args)
 
-    # Get all conversations and extract sessions (no progress stubs needed)
-    records = get_all_conversations(project_dir, include_progress_stubs=False)
-    sessions = get_sessions(records)
+    # Stream files one at a time to avoid loading all records into memory
+    sessions = get_sessions_from_dir(project_dir)
 
     if not sessions:
         print("No sessions found in project history.")
@@ -895,7 +894,17 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
     return (session_ids[n][:8], ctx_window)
 
 
+def _set_memory_limit(max_gb: float = 4.0) -> None:
+    try:
+        import resource
+        limit = int(max_gb * 1024**3)
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except (ImportError, ValueError, OSError):
+        pass
+
+
 def main() -> None:
+    _set_memory_limit()
     parser = argparse.ArgumentParser(
         description="Claude Code Project History Navigator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1050,7 +1059,14 @@ def main() -> None:
         "search": cmd_search,
     }
 
-    commands[args.command](args)
+    try:
+        commands[args.command](args)
+    except MemoryError:
+        print(
+            "Error: Out of memory. Try --since to limit scope (e.g., --since 1w).",
+            file=sys.stderr,
+        )
+        sys.exit(137)
 
 
 if __name__ == "__main__":

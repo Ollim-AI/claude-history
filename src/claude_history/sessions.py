@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
 from claude_history.chain import extract_user_prompts
+from claude_history.io import parse_jsonl_file
 from claude_history.models import (
     DT_MIN,
     CompactBoundary,
@@ -206,4 +210,38 @@ def get_sessions(records: list[Record]) -> list[Session]:
     session_list = list(sessions.values())
     session_list.sort(key=lambda x: x.latest_timestamp or DT_MIN, reverse=True)
 
+    return session_list
+
+
+def get_sessions_from_dir(project_dir: Path) -> list[Session]:
+    """Build session metadata by streaming files one at a time.
+
+    Unlike get_sessions() which requires all records in memory at once,
+    this processes files via executor.map — each file's records are parsed,
+    accumulated into Session objects, then discarded before the next file.
+
+    Peak memory: O(largest_single_file) instead of O(all_files).
+    """
+    files = list(project_dir.glob("*.jsonl"))
+    if not files:
+        return []
+
+    sessions: dict[str, Session] = {}
+
+    with ThreadPoolExecutor(max_workers=min(8, len(files))) as executor:
+        for file_records in executor.map(
+            lambda f: parse_jsonl_file(f, include_progress_stubs=False), files
+        ):
+            for record in file_records:
+                if isinstance(record, ProgressStub):
+                    continue
+                session_id = record.get("sessionId", "unknown")
+                if session_id == "unknown":
+                    continue
+                if session_id not in sessions:
+                    sessions[session_id] = Session(session_id=session_id)
+                _accumulate_session_record(sessions[session_id], record)
+
+    session_list = list(sessions.values())
+    session_list.sort(key=lambda x: x.latest_timestamp or DT_MIN, reverse=True)
     return session_list
