@@ -14,6 +14,7 @@ from claude_history.models import (
     _YELLOW,
     HOOK_ERROR_RE,
     ContentBlock,
+    TaskNotification,
     ToolResultContent,
     ToolUseContent,
     extract_hook_contexts,
@@ -244,5 +245,15 @@ def render_blocks(
                     print(dim(json.dumps(content.content, indent=2)))
                 print()
                 prev_type = "tool_result"
+
+        elif block_type == "notification":
+            has_output = True
+            assert isinstance(content, TaskNotification)
+            print(dim(f"[system] {content.summary}"))
+            if show_tool_results and content.result:
+                print(dim("[result]"))
+                print(dim(content.result))
+            print()
+            prev_type = "notification"
 
     return has_output

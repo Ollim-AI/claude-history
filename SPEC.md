@@ -88,6 +88,45 @@ Human message or tool result response.
 
 The `tool_result` block's `content` field can be either a string or an array of content blocks (e.g., `[{"type": "text", "text": "..."}]`). The `is_error` field is optional.
 
+**Async (background) agent results (v2.1.45+):**
+
+When a Task/Agent tool call has `run_in_background: true`, the result flow differs from synchronous agents:
+
+1. **Immediate `tool_result`**: The `tool_result` block content is `[{"type": "text", "text": "Async agent launched successfully.\nagentId: abccd67 ..."}]`. The `toolUseResult` has a distinct schema:
+   ```json
+   {
+     "isAsync": true,
+     "status": "async_launched",
+     "agentId": "abccd67",
+     "description": "task description",
+     "prompt": "agent prompt...",
+     "outputFile": "/tmp/claude-1000/.../tasks/abccd67.output"
+   }
+   ```
+
+2. **Queue enqueue**: A `queue-operation` record with `operation: "enqueue"` is written at launch, containing a JSON-encoded task descriptor: `{"task_id":"abccd67","description":"...","task_type":"local_agent"}`.
+
+3. **Completion notification**: When the background agent finishes, two records appear:
+   - A `queue-operation` with `operation: "enqueue"` containing a `<task-notification>` XML string
+   - A **user record** with `message.content` as a **plain string** (not an array) containing the same `<task-notification>`:
+     ```xml
+     <task-notification>
+     <task-id>abccd67</task-id>
+     <tool-use-id>toolu_...</tool-use-id>
+     <output-file>/tmp/.../tasks/abccd67.output</output-file>
+     <status>completed</status>
+     <summary>Agent "Batch 1" completed</summary>
+     <result>Detailed result text...</result>
+     <usage><total_tokens>27382</total_tokens><tool_uses>22</tool_uses><duration_ms>70993</duration_ms></usage>
+     </task-notification>
+     Full transcript available at: /tmp/.../tasks/abccd67.output
+     ```
+   > **Version note:** `<tool-use-id>` and `<output-file>` tags were added in v2.1.74. Earlier versions (v2.1.45) place them only in the `toolUseResult` metadata. The `<usage>` tag also changed from plain text (`total_tokens: 27382`) to nested XML (`<total_tokens>27382</total_tokens>`) at the same version. Parsers should handle both formats.
+
+The `<task-id>` matches the `agentId` from step 1, linking the completion back to the original tool call. The completion user record's `parentUuid` points to the `turn_duration` system record (not the original tool_use assistant), so correlation must use `task-id` ↔ `agentId`, not `parentUuid`.
+
+> **Gotcha for parsers:** The immediate `tool_result` only says "Async agent launched" — it does NOT contain the agent's work product. To show actual results, parsers must find the `<task-notification>` user record with matching `<task-id>` and use its `<result>` content.
+
 **Meta message linking (v2.1.38+):**
 
 `sourceToolUseID` (string) appears on user records with `isMeta: true`. It contains a `toolu_` ID linking the meta message to the tool_use that triggered it (e.g., a skill loading message triggered by a Skill tool call). This field is not needed for identifying user-typed prompts (those already filter on `isMeta`), but is useful for tracing system-injected content back to its trigger.

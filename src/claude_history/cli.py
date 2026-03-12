@@ -16,6 +16,7 @@ from pathlib import Path
 
 from claude_history.agents import get_subagents
 from claude_history.chain import (
+    build_notification_map,
     build_task_agent_map,
     extract_all_text,
     extract_all_tools,
@@ -42,6 +43,7 @@ from claude_history.models import (
     SearchMatch,
     TeammateMessage,
     ToolUseContent,
+    iter_user_records,
     parse_teammate_message,
     parse_timestamp,
 )
@@ -215,7 +217,7 @@ def cmd_response(args: argparse.Namespace) -> None:
 
     print(f"Response to: {cyan(user_record['uuid'][:8])} | {dim(ts_str)}\n")
 
-    blocks = extract_ordered_content(chain, records if (show_tool_results or show_hooks) else None)
+    blocks = extract_ordered_content(chain, records, include_tool_results=show_tool_results or show_hooks)
     task_agent_map = build_task_agent_map(records) if show_tools else {}
 
     if not render_blocks(
@@ -424,16 +426,15 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     else:
         windows = list(enumerate(compactions))
 
-    # Build Task->subagent map once (not needed for prompts-only)
+    # Build maps once for the entire session (not needed for prompts-only)
     task_agent_map = {} if prompts_only else build_task_agent_map(records)
+    notif_map = {} if prompts_only else build_notification_map(records)
 
     # Collect teammate messages for this session
     teammate_msgs: list[TeammateMessage] = []
     if not prompts_only:
-        for r in records:
-            if isinstance(r, ProgressStub):
-                continue
-            if r.get("type") != "user" or r.get("sessionId") != session_id:
+        for r in iter_user_records(records):
+            if r.get("sessionId") != session_id:
                 continue
             tm = parse_teammate_message(r)
             if tm:
@@ -521,7 +522,7 @@ def cmd_transcript(args: argparse.Namespace) -> None:
             if not prompts_only:
                 chain = get_full_response(records, prompt.uuid)
                 if chain:
-                    blocks = extract_ordered_content(chain, records if (show_tool_results or show_hooks) else None)
+                    blocks = extract_ordered_content(chain, records, include_tool_results=show_tool_results or show_hooks, notification_map=notif_map)
 
                     # Team phase separators
                     for block in blocks:

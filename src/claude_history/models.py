@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Literal, NamedTuple
 
 _RESET = "\033[0m"
@@ -16,7 +17,7 @@ _CYAN = "\033[36m"
 _YELLOW = "\033[33m"
 _GREEN = "\033[32m"
 
-BlockType = Literal["thinking", "text", "tool_use", "tool_result"]
+BlockType = Literal["thinking", "text", "tool_use", "tool_result", "notification"]
 
 HOOK_ERROR_RE = re.compile(r"^(PreToolUse|PostToolUse):\w+ hook error:", re.MULTILINE)
 _HOOK_CONTEXT_RE = re.compile(
@@ -109,7 +110,7 @@ class ToolResultContent:
 @dataclass(frozen=True, slots=True)
 class ContentBlock:
     type: BlockType
-    content: str | ToolUseContent | ToolResultContent
+    content: str | ToolUseContent | ToolResultContent | TaskNotification
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +151,52 @@ class SearchMatch:
     text: str
 
 
+@dataclass(frozen=True, slots=True)
+class TaskNotification:
+    task_id: str
+    status: str
+    summary: str
+    result: str
+    usage: str
+
+
+_TASK_NOTIFICATION_RE = re.compile(
+    r"<task-notification>\s*"
+    r"<task-id>([^<]+)</task-id>"
+    r".*?"  # optional tags: <tool-use-id>, <output-file> (v2.1.74+)
+    r"<status>([^<]+)</status>\s*"
+    r"<summary>([^<]*)</summary>\s*"
+    r"<result>(.*?)</result>\s*"
+    r"(?:<usage>(.*?)</usage>\s*)?"
+    r"</task-notification>",
+    re.DOTALL,
+)
+
+
+def parse_task_notification(text: str) -> TaskNotification | None:
+    """Parse a <task-notification> XML string into a TaskNotification."""
+    m = _TASK_NOTIFICATION_RE.search(text)
+    if not m:
+        return None
+    return TaskNotification(
+        task_id=m.group(1).strip(),
+        status=m.group(2).strip(),
+        summary=m.group(3).strip(),
+        result=m.group(4).strip(),
+        usage=(m.group(5) or "").strip(),
+    )
+
+
 Record = dict | ProgressStub
+
+
+def iter_user_records(records: list[Record]) -> Iterator[dict]:
+    """Yield non-ProgressStub user records."""
+    for record in records:
+        if isinstance(record, ProgressStub):
+            continue
+        if record.get("type") == "user":
+            yield record
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 PAGE_SIZE = 10

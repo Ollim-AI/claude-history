@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 
 from claude_history.models import (
     DT_MIN,
@@ -11,10 +12,13 @@ from claude_history.models import (
     ProgressStub,
     Prompt,
     Record,
+    TaskNotification,
     ToolResultContent,
     ToolUseContent,
     extract_content_text,
     extract_hook_contexts,
+    iter_user_records,
+    parse_task_notification,
     parse_timestamp,
 )
 
@@ -35,12 +39,7 @@ def extract_user_prompts(records: list[Record]) -> list[Prompt]:
         if parent and rtype:
             child_types[parent] = rtype
 
-    for record in records:
-        if isinstance(record, ProgressStub):
-            continue
-        if record.get("type") != "user":
-            continue
-
+    for record in iter_user_records(records):
         # Skip compaction summaries (system-generated context summaries)
         if record.get("isCompactSummary"):
             continue
@@ -344,15 +343,11 @@ def extract_hook_text(chain: list[dict], records: list[Record]) -> str:
 
 
 def _collect_tool_results(
-    records: list[Record], tool_use_ids: set[str]
+    records: list[Record], tool_use_ids: Collection[str]
 ) -> dict[str, ToolResultContent]:
     """Collect tool results from user records that match given tool_use IDs."""
     results: dict[str, ToolResultContent] = {}
-    for record in records:
-        if isinstance(record, ProgressStub):
-            continue
-        if record.get("type") != "user":
-            continue
+    for record in iter_user_records(records):
         message = record.get("message", {})
         content = message.get("content", [])
         if not isinstance(content, list):
@@ -389,18 +384,59 @@ def _split_thinking_tags(text: str) -> list[ContentBlock]:
     return blocks
 
 
+def build_notification_map(records: list[Record]) -> dict[str, TaskNotification]:
+    """Map record UUID → TaskNotification for task-notification user records."""
+    notifications: dict[str, TaskNotification] = {}
+    for record in iter_user_records(records):
+        content = record.get("message", {}).get("content")
+        if not isinstance(content, str):
+            continue
+        if "<task-notification>" not in content:
+            continue
+        notif = parse_task_notification(content)
+        if notif:
+            uuid = record.get("uuid", "")
+            if uuid:
+                notifications[uuid] = notif
+    return notifications
+
+
 def extract_ordered_content(
-    chain: list[dict], records: list[Record] | None = None
+    chain: list[dict],
+    records: list[Record] | None = None,
+    *,
+    include_tool_results: bool = False,
+    notification_map: dict[str, TaskNotification] | None = None,
 ) -> list[ContentBlock]:
     """Extract all content blocks from chain in order.
 
-    If records is provided, also extracts tool_result blocks by finding
-    user records that respond to tool_use blocks in the chain.
+    If records is provided, inserts async notification summaries at their
+    chronological position (always — they're lightweight system events).
+    Tool results are verbose, so they require explicit ``include_tool_results=True``.
+
+    Pass a pre-built notification_map to avoid rebuilding it on every call
+    (useful when calling in a loop over the same records).
     """
     blocks: list[ContentBlock] = []
     tool_use_ids: dict[str, int] = {}  # Map tool_use_id to index in blocks list
 
+    # Build notification map: uuid → summary for task-notification user records.
+    # When an assistant record's parent is a notification, insert the summary
+    # before that assistant's content (matching Claude Code's display order).
+    if notification_map is None:
+        notification_map = build_notification_map(records) if records else {}
+
     for record in chain:
+        # Insert notification before assistant records that respond to one
+        parent_uuid = record.get("parentUuid", "")
+        if parent_uuid in notification_map:
+            blocks.append(
+                ContentBlock(
+                    type="notification",
+                    content=notification_map[parent_uuid],
+                )
+            )
+
         message = record.get("message", {})
         content = message.get("content", [])
 
@@ -434,9 +470,9 @@ def extract_ordered_content(
                 if tool_id:
                     tool_use_ids[tool_id] = len(blocks) - 1
 
-    # If records provided, find tool results and insert after their tool_use
-    if records and tool_use_ids:
-        tool_results = _collect_tool_results(records, set(tool_use_ids))
+    # If requested, find tool results and insert after their tool_use
+    if include_tool_results and records and tool_use_ids:
+        tool_results = _collect_tool_results(records, tool_use_ids.keys())
 
         # Insert tool results after their corresponding tool_use (in reverse order to maintain indices)
         inserts: list[tuple[int, ContentBlock]] = []
