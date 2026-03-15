@@ -1,6 +1,9 @@
 """Tests for get_full_response chain traversal, especially progress stub chains."""
 
-from claude_history.chain import get_full_response, is_user_text_prompt
+import time
+
+from claude_history.chain import extract_user_prompts, get_full_response, is_user_text_prompt
+from claude_history.io import parse_jsonl_file
 from claude_history.models import ProgressStub
 
 
@@ -92,3 +95,89 @@ class TestIsUserTextPrompt:
     def test_tool_result_is_not_user_prompt(self) -> None:
         record = _user("u1", "a1", text="result", is_tool_result=True)
         assert is_user_text_prompt(record) is False
+
+
+# -- Performance tests against real session files --
+
+_SESSIONS = {
+    "parallel_agents": "2d32a582-102d-4462-bbbe-8d9ecd53dc45",
+    "large": "f2c7dc51-6f01-4451-ab65-f79d3320ce0d",
+    "medium": "0aa3bb6d-a9ea-46ea-b020-9fb8d181f15b",
+}
+_PROJECT_DIR = "/home/julius/.claude/projects/-home-julius-ollim-bot-docs"
+
+
+def _load_and_traverse(session_id: str) -> tuple[float, int]:
+    """Load a session and traverse all prompt chains. Returns (seconds, chain_records)."""
+    from pathlib import Path
+
+    filepath = Path(_PROJECT_DIR) / f"{session_id}.jsonl"
+    if not filepath.exists():
+        return 0.0, 0
+    records = parse_jsonl_file(filepath, include_progress_stubs=True)
+    prompts = [p for p in extract_user_prompts(records) if p.is_user_prompt]
+    start = time.perf_counter()
+    total_chain = 0
+    for p in prompts:
+        chain = get_full_response(records, p.uuid)
+        total_chain += len(chain)
+    elapsed = time.perf_counter() - start
+    return elapsed, total_chain
+
+
+class TestPerformance:
+    """Ensure chain traversal stays fast on real session files."""
+
+    def test_parallel_agents_session_under_50ms(self) -> None:
+        elapsed, chain_len = _load_and_traverse(_SESSIONS["parallel_agents"])
+        if chain_len == 0:
+            return  # file not available
+        assert chain_len > 10, f"expected substantial chain, got {chain_len}"
+        assert elapsed < 0.05, f"took {elapsed:.3f}s, expected <50ms"
+
+    def test_large_session_under_200ms(self) -> None:
+        elapsed, chain_len = _load_and_traverse(_SESSIONS["large"])
+        if chain_len == 0:
+            return
+        assert elapsed < 0.2, f"took {elapsed:.3f}s, expected <200ms"
+
+    def test_medium_session_under_100ms(self) -> None:
+        elapsed, chain_len = _load_and_traverse(_SESSIONS["medium"])
+        if chain_len == 0:
+            return
+        assert elapsed < 0.1, f"took {elapsed:.3f}s, expected <100ms"
+
+    def test_deep_progress_chain_linear_not_quadratic(self) -> None:
+        """Verify traversal through N progress stubs is O(N), not O(N^2).
+        Build chains of 100 and 1000 stubs; ratio should be ~10x, not ~100x.
+        """
+        def build_chain(depth: int) -> list:
+            records: list = [
+                _user("prompt", "", text="go"),
+                _assistant("A", "prompt", tool_name="Agent"),
+                _user("C", "A", is_tool_result=True),
+            ]
+            parent = "A"
+            for i in range(depth):
+                records.append(_stub(f"P{i}", parent))
+                parent = f"P{i}"
+            records.append(_assistant("Z", parent, text="done"))
+            return records
+
+        # Warm up
+        get_full_response(build_chain(10), "prompt")
+
+        r100 = build_chain(100)
+        start = time.perf_counter()
+        for _ in range(50):
+            get_full_response(r100, "prompt")
+        t100 = time.perf_counter() - start
+
+        r1000 = build_chain(1000)
+        start = time.perf_counter()
+        for _ in range(50):
+            get_full_response(r1000, "prompt")
+        t1000 = time.perf_counter() - start
+
+        ratio = t1000 / t100
+        assert ratio < 20, f"scaling ratio {ratio:.1f}x for 10x input — suggests quadratic"
