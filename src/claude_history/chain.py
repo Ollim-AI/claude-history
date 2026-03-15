@@ -126,6 +126,10 @@ def is_user_text_prompt(record: dict) -> bool:
             if isinstance(block, str) and block.strip():
                 return True
             if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text", "")
+                # System-injected interruption messages (not user-typed)
+                if text.strip().startswith("[Request interrupted"):
+                    return False
                 return True
 
     return False
@@ -199,9 +203,17 @@ def get_full_response(records: list[Record], prompt_uuid: str) -> list[dict]:
 
         if not next_record:
             # Dead end - try following through progress records.
-            # When a tool_result has no continuation but its parent (the tool_use
-            # assistant) has a progress sibling, follow through it. This handles
-            # Skill/Task tool responses where the chain bridges through subagents.
+            # 1. Follow progress children (traverses agent progress chains
+            #    where parallel tool_use records are linked through deep
+            #    ProgressStub chains).
+            progress_child = _find_progress_sibling(children, visited)
+            if progress_child:
+                visited.add(progress_child)
+                current_uuid = progress_child
+                continue
+
+            # 2. Follow progress sibling of parent (handles Skill/Task
+            #    tool responses where the chain bridges through subagents).
             current_record = record_map.get(current_uuid)
             if current_record is None:
                 break
