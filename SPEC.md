@@ -602,6 +602,24 @@ USER (uuid: W, tool_result for A, parentUuid: Z)
 
 > **Important:** A `tool_result`'s `parentUuid` points to its predecessor in the chain, NOT necessarily to the assistant record that made that `tool_use` call. To correlate a `tool_result` with its `tool_use`, match on `tool_use_id` rather than relying on `parentUuid`.
 
+#### Agent/Subagent Parallel Calls (v2.1.76+)
+
+When parallel Agent tool calls are made, the second (and subsequent) `tool_use` assistant records do NOT chain directly from the first. Instead, the second tool_use's `parentUuid` points to a progress record deep in an `agent_progress` chain descending from the first tool_use:
+
+```
+ASSISTANT (uuid: A, text)
+├── ASSISTANT (uuid: B, tool_use Agent1)
+│   ├── USER (uuid: C, tool_result)           ← dead end for chain walker
+│   └── PROGRESS (uuid: P1, parentUuid: B)
+│       └── PROGRESS (uuid: P2, parentUuid: P1)
+│           └── PROGRESS (uuid: P3, parentUuid: P2)
+│               └── ASSISTANT (uuid: D, tool_use Agent2, parentUuid: P3)
+│                   └── USER (uuid: E, tool_result)
+│                       └── ASSISTANT (uuid: F, continues...)
+```
+
+> **Critical for chain walkers:** A naive traversal that skips progress records entirely will stop at C (dead end) and miss D, E, F — truncating the transcript. Parsers must follow through progress child chains at dead ends to reach the continuation. The progress chain depth varies (observed 2–5 stubs).
+
 ### Identifying User-Typed Prompts
 
 User records include both user-typed prompts and system-generated messages. To distinguish:
@@ -613,6 +631,7 @@ User records include both user-typed prompts and system-generated messages. To d
 | Compact summary | varies | no | no | **yes** | array |
 | System-injected (isMeta) | varies | no | yes | no | array |
 | Teammate message | yes | no | no | no | **string** (XML) |
+| Interruption message | yes | no | no | no | array (text starts with `[Request interrupted`) |
 
 **Rule:** A user message is user-typed if and only if:
 1. It has an `assistant` record as its child (check `parentUuid` of other records)
@@ -620,6 +639,7 @@ User records include both user-typed prompts and system-generated messages. To d
 3. It does NOT have `isMeta: true`
 4. It does NOT have `isCompactSummary: true`
 5. Its `message.content` is an array, not a string (v2.1.63+: string content indicates a teammate message — see §Teammate-message records)
+6. Its text content does NOT start with `[Request interrupted` (system-injected when the user interrupts a tool call — lacks `isMeta` and `sourceToolAssistantUUID`)
 
 > **Gotcha:** Compact summary records (`isCompactSummary: true`) contain long system-generated context summaries starting with "This session is being continued from a previous conversation...". They lack both `sourceToolAssistantUUID` and `isMeta`, so they will pass through a filter that only checks those two fields. Always filter on `isCompactSummary` as well.
 
@@ -917,7 +937,7 @@ Shutdown request ID format: `shutdown-{unix_ms}@{recipient_name}`
 
 ## Version History
 
-Observed client versions: `2.0.64` through `2.1.63`
+Observed client versions: `2.0.64` through `2.1.76`
 
 Notable changes by version:
 - **v2.1.38**: `sourceToolUseID` on meta user records, `isApiErrorMessage` assistant records, `stop_hook_summary` system subtype, `caller` field on tool_use blocks
@@ -925,6 +945,7 @@ Notable changes by version:
 - **v2.1.45**: `mcp_progress` type
 - **v2.1.50**: Agent hash length changed from 7-char to 17-char hex; acompact hash from 6-char to 16-char hex; new `message.usage` fields (`server_tool_use`, `inference_geo`, `iterations`, `speed`); new message fields (`context_management`, `container`)
 - **v2.1.63**: Agent teams support: `teamName` field, teammate-message user records, TeamCreate/TeamDelete/SendMessage/TaskCreate/TaskUpdate/TaskList tools, `teammate_spawned` Agent toolUseResult variant, no `agent_progress` for team subagents
+- **v2.1.76**: `slug` field on progress records (was previously only on user/assistant records); parallel Agent tool_use records chain through deep progress stub chains instead of directly (see §Parallel Tool Calls); `[Request interrupted by user for tool use]` user records lack `isMeta` flag
 
 ---
 
@@ -974,4 +995,4 @@ This spec is reverse-engineered from observed JSONL data. Claude Code does not p
 - Mark unverifiable claims (e.g., record types with zero occurrences in local data)
 - Update this "Version History" section with notable changes per version
 
-**Last audited:** 2026-03-03 against versions 2.0.64–2.1.63 (agent teams audit from N=1 session)
+**Last audited:** 2026-03-15 against versions 2.0.64–2.1.76 (v2.1.76: parallel agent chains, slug on progress, interruption messages)
