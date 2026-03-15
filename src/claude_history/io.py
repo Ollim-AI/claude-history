@@ -17,15 +17,20 @@ def _extract_progress_stub(line: str) -> ProgressStub | None:
 
     Uses fixed field positions for speed:
     - parentUuid: always in first 200 bytes
-    - uuid, parentToolUseID, agentId: always in last 250 bytes
-    The top-level uuid is at end-86 (not the first "uuid" in the line,
-    which is a nested UUID inside data.message).
+    - parentToolUseID, agentId: always in last 350 bytes
+    - uuid: last occurrence in the line (the first is a nested UUID
+      inside data.message; the top-level one comes after the data field)
     """
-    head = line[:200]
-    tail = line[-250:]
-    uuid_m = re.search(r'"uuid":"([^"]+)"', tail)
+    # Top-level uuid is the LAST "uuid" in the line (after nested data.message.uuid).
+    # rfind + short regex is faster than scanning the full line with findall.
+    uuid_pos = line.rfind('"uuid":"')
+    if uuid_pos == -1:
+        return None
+    uuid_m = re.search(r'"uuid":"([^"]+)"', line[uuid_pos:])
     if not uuid_m:
         return None
+    head = line[:200]
+    tail = line[-350:]
     parent_m = re.search(r'"parentUuid":"([^"]+)"', head)
     ptid_m = re.search(r'"parentToolUseID":"([^"]+)"', tail)
     aid_m = re.search(r'"agentId":"([^"]+)"', tail)
