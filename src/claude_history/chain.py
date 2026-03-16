@@ -55,7 +55,7 @@ def extract_user_prompts(records: list[Record]) -> list[Prompt]:
         # Skip teammate-message records (v2.1.63+: string starting with <teammate-message)
         # Other string-content records (bash-input, local-command-caveat, plain text
         # prompts) are legitimate and handled by downstream classification.
-        if isinstance(content, str) and content.lstrip().startswith("<teammate-message"):
+        if isinstance(content, str) and content.startswith("<teammate-message"):
             continue
 
         prompt_text = extract_content_text(content)
@@ -119,8 +119,8 @@ def is_user_text_prompt(record: dict) -> bool:
 
     content = record.get("message", {}).get("content", [])
 
-    # String content = teammate-message record (not user-typed)
-    if isinstance(content, str):
+    # Teammate-message records have string content starting with <teammate-message
+    if isinstance(content, str) and content.startswith("<teammate-message"):
         return False
 
     if isinstance(content, list):
