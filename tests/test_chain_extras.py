@@ -10,6 +10,7 @@ from claude_history.chain import (
     extract_text_from_response,
     extract_thinking_from_response,
     extract_tools_from_response,
+    extract_user_prompts,
     find_response_for_prompt,
 )
 from claude_history.models import ProgressStub, ToolUseContent
@@ -225,3 +226,66 @@ class TestBuildTaskAgentMap:
         ]
         mapping = build_task_agent_map(records)
         assert mapping["toolu_1"] == "first"
+
+
+class TestExtractUserPromptsStringContent:
+    """Test that extract_user_prompts handles string-content user records correctly."""
+
+    def _make_records(self, content: str | list, *, has_assistant_child: bool = True) -> list:
+        user: dict = {
+            "type": "user",
+            "uuid": "u1",
+            "parentUuid": None,
+            "sessionId": "s1",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "message": {"role": "user", "content": content},
+        }
+        records: list = [user]
+        if has_assistant_child:
+            records.append({
+                "type": "assistant",
+                "uuid": "a1",
+                "parentUuid": "u1",
+                "sessionId": "s1",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
+            })
+        return records
+
+    def test_plain_string_prompt_included(self) -> None:
+        records = self._make_records("fix the bug")
+        prompts = extract_user_prompts(records)
+        assert len(prompts) == 1
+        assert "fix the bug" in prompts[0].text
+
+    def test_teammate_message_excluded(self) -> None:
+        xml = '<teammate-message teammate_id="critic" color="yellow">Some feedback</teammate-message>'
+        records = self._make_records(xml)
+        prompts = extract_user_prompts(records)
+        assert len(prompts) == 0
+
+    def test_bash_input_included_not_user_prompt(self) -> None:
+        records = self._make_records(
+            "<bash-input>ls -la</bash-input>",
+            has_assistant_child=False,
+        )
+        prompts = extract_user_prompts(records)
+        assert len(prompts) == 1
+        assert not prompts[0].is_user_prompt
+
+    def test_local_command_caveat_included(self) -> None:
+        records = self._make_records(
+            "<local-command-caveat>Caveat: local commands</local-command-caveat>",
+            has_assistant_child=False,
+        )
+        prompts = extract_user_prompts(records)
+        assert len(prompts) == 1
+        assert not prompts[0].is_user_prompt
+
+    def test_task_notification_included(self) -> None:
+        records = self._make_records(
+            "<task-notification><task-id>abc</task-id><status>completed</status></task-notification>",
+            has_assistant_child=False,
+        )
+        prompts = extract_user_prompts(records)
+        assert len(prompts) == 1
+        assert not prompts[0].is_user_prompt

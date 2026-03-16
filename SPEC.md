@@ -354,6 +354,25 @@ When an agent is resumed, the `data` object also contains `"resume": "agent-id"`
 
 `hookName` follows the format `{hookEvent}:{toolName}` (e.g., `PostToolUse:Edit`). For hook_progress records, `toolUseID` and `parentToolUseID` are typically identical.
 
+**Hook errors in tool_result blocks:** When a hook blocks a tool call (exit code 2), the error appears as a `tool_result` block with `is_error: true` in the subsequent user record. The content follows the pattern `{hookEvent}:{toolName} hook error: [{hook_path}]: {reason}`:
+
+```
+PreToolUse:Bash hook error: [/home/user/.claude/hooks/security_validator.py]: SECURITY: Use `uv run` instead of calling python directly.
+Blocked: python3 -c "import json..."
+```
+
+These are distinct from regular tool errors. Parsers can identify them via the regex `^(PreToolUse|PostToolUse):\w+ hook error:`.
+
+**Hook context injection in assistant text blocks:** When a hook returns `additionalContext` in its `hookSpecificOutput`, Claude Code injects it as a `<system-reminder>` tag in the next assistant text block:
+
+```
+<system-reminder>
+PreToolUse:Read hook additional context: CRITICAL: cli.py is 1117 lines. This file is way too long.
+</system-reminder>
+```
+
+Format: `{hookEvent}:{toolName} hook additional context: {message}`. These tags are embedded in the assistant's text content and can be extracted via regex.
+
 #### MCP Progress (`data.type: "mcp_progress"`, v2.1.45+)
 
 Tracks MCP server tool invocations:
@@ -445,6 +464,28 @@ System metadata records.
   "isMeta": false
 }
 ```
+
+**Stop Hook Summary Record (v2.1.38+):**
+```json
+{
+  "type": "system",
+  "subtype": "stop_hook_summary",
+  "hookCount": 1,
+  "hookInfos": [
+    {
+      "command": "/path/to/script.sh"
+    }
+  ],
+  "hookErrors": [],
+  "preventedContinuation": false,
+  "stopReason": "",
+  "hasOutput": false,
+  "level": "suggestion",
+  "toolUseID": "d3c7b71f-..."
+}
+```
+
+`hookInfos` is an array of objects. Each has a `command` field (always present). Prompt/agent hooks also include `promptText` with the prompt string. `hookErrors` is an array of error strings (empty when no errors). `preventedContinuation` is `true` when a Stop hook blocked Claude from stopping. `level` is typically `"suggestion"`.
 
 **API Error Record:**
 ```json
@@ -626,24 +667,37 @@ User records include both user-typed prompts and system-generated messages. To d
 
 | Message Type | Has Assistant Child | Has `sourceToolAssistantUUID` | `isMeta` | `isCompactSummary` | `message.content` type |
 |--------------|---------------------|-------------------------------|----------|---------------------|------------------------|
-| User-typed prompt | yes | no | no | no | array |
+| User-typed prompt | yes | no | no | no | array or plain string |
 | Tool result | yes | yes | no | no | array |
 | Compact summary | varies | no | no | **yes** | array |
-| System-injected (isMeta) | varies | no | yes | no | array |
-| Teammate message | yes | no | no | no | **string** (XML) |
+| System-injected (isMeta) | varies | no | yes | no | array or string |
+| Teammate message | yes | no | no | no | **string** (starts with `<teammate-message`) |
+| Local command artifact | varies | no | varies | no | **string** (`<bash-input>`, `<bash-stdout>`, `<local-command-caveat>`) |
+| Task notification | varies | no | no | no | **string** (starts with `<task-notification>`) |
 | Interruption message | yes | no | no | no | array (text starts with `[Request interrupted`) |
+
+**String content shapes:** Multiple user record types use string `message.content` (not just teammate messages):
+
+| String prefix | Record type | Has `isMeta` | Has assistant child |
+|---------------|-------------|--------------|---------------------|
+| `<teammate-message` | Teammate message (v2.1.63+) | no | yes |
+| `<bash-input>` | CLI command input | no | no |
+| `<bash-stdout>` / `<bash-stderr>` | CLI command output | no | no |
+| `<local-command-caveat>` | Local command warning | yes | no |
+| `<task-notification>` | Background task result | no | varies |
+| *(plain text)* | User-typed prompt | no | yes |
 
 **Rule:** A user message is user-typed if and only if:
 1. It has an `assistant` record as its child (check `parentUuid` of other records)
 2. It does NOT have `sourceToolAssistantUUID` field
 3. It does NOT have `isMeta: true`
 4. It does NOT have `isCompactSummary: true`
-5. Its `message.content` is an array, not a string (v2.1.63+: string content indicates a teammate message — see §Teammate-message records)
+5. Its `message.content` is NOT a string starting with `<teammate-message` (v2.1.63+: see §Teammate-message records)
 6. Its text content does NOT start with `[Request interrupted` (system-injected when the user interrupts a tool call — lacks `isMeta` and `sourceToolAssistantUUID`)
 
 > **Gotcha:** Compact summary records (`isCompactSummary: true`) contain long system-generated context summaries starting with "This session is being continued from a previous conversation...". They lack both `sourceToolAssistantUUID` and `isMeta`, so they will pass through a filter that only checks those two fields. Always filter on `isCompactSummary` as well.
 
-> **Gotcha (v2.1.63+):** Teammate-message records lack `isMeta`, `sourceToolAssistantUUID`, and `isCompactSummary`, and they DO have an assistant child. They pass all four original filters. The only distinguishing feature is that `message.content` is a string (starting with `<teammate-message`) rather than an array. Always check the content type in agent teams sessions.
+> **Gotcha (v2.1.63+):** Teammate-message records lack `isMeta`, `sourceToolAssistantUUID`, and `isCompactSummary`, and they DO have an assistant child. They pass all four original filters. To exclude them, check whether `message.content` is a string starting with `<teammate-message`. Do NOT exclude all string content — plain-text user prompts and local command artifacts also use string content but are distinguished by other fields (no assistant child, `isMeta`, etc.).
 
 ### Context Windows
 
