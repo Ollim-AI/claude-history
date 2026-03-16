@@ -14,7 +14,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from claude_history.agents import get_subagents
+from claude_history.agents import get_subagents, render_subagent_transcript, search_subagent_files
 from claude_history.chain import (
     build_notification_map,
     build_task_agent_map,
@@ -26,6 +26,7 @@ from claude_history.chain import (
     get_full_response,
 )
 from claude_history.io import (
+    find_subagent_file,
     get_all_conversations,
     get_session_conversations,
     parse_jsonl_file,
@@ -246,6 +247,15 @@ def cmd_subagents(args: argparse.Namespace) -> None:
 
     subagents = get_subagents(project_dir)
 
+    # Apply filters
+    session_filter = getattr(args, "session", None)
+    if session_filter:
+        subagents = [a for a in subagents if a.session_id.startswith(session_filter)]
+    since = getattr(args, "since", None)
+    if since:
+        since_dt = parse_since(since)
+        subagents = [a for a in subagents if a.earliest_timestamp and a.earliest_timestamp >= since_dt]
+
     if not subagents:
         print("No subagent files found.")
         return
@@ -332,7 +342,7 @@ def cmd_subagents(args: argparse.Namespace) -> None:
 
         print(f"    {' | '.join(parts)}")
         if agent.prompt:
-            preview = truncate_text(agent.prompt, 80)
+            preview = truncate_text(agent.prompt.replace("\n", " "), 80)
             print(f"    {dim(preview)}")
         print()
 
@@ -350,6 +360,14 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     --show-tool-results: + tool results (full detail, no truncation)
     """
     project_dir = resolve_project_dir(args)
+
+    # Detect agent ID (hex hash without dashes, not 'prev')
+    raw_id = args.identifier.split(":")[0]
+    if re.fullmatch(r'[0-9a-f]+', raw_id) and not raw_id.startswith("prev"):
+        agent_file = find_subagent_file(project_dir, raw_id)
+        if agent_file:
+            render_subagent_transcript(agent_file, args)
+            return
 
     session_prefix, window_idx = resolve_session_ref(args.identifier, project_dir)
 
@@ -644,6 +662,7 @@ def prefilter_files(
     text from subagent context and cause false positives), then checks for the query.
     """
     jsonl_files = list(project_dir.glob("*.jsonl"))
+    jsonl_files.extend(project_dir.glob("*/subagents/agent-*.jsonl"))
     if not jsonl_files:
         return []
     matching = []
@@ -779,11 +798,13 @@ def cmd_search(args: argparse.Namespace) -> None:
 
     # Pre-filter files with grep for content matches
     matching_files = prefilter_files(project_dir, query, case_sensitive)
+    session_files = [f for f in matching_files if "/subagents/" not in str(f)]
+    subagent_files = [f for f in matching_files if "/subagents/" in str(f)]
     matches = []
-    if matching_files:
+    if session_files:
         need_stubs = search_responses
         records = []
-        for f in matching_files:
+        for f in session_files:
             file_records = parse_jsonl_file(f, include_progress_stubs=need_stubs)
             for r in file_records:
                 if isinstance(r, dict):
@@ -792,6 +813,8 @@ def cmd_search(args: argparse.Namespace) -> None:
         matches = search_records(
             records, query, case_sensitive, search_prompts, search_responses
         )
+    if subagent_files:
+        matches.extend(search_subagent_files(subagent_files, query, case_sensitive))
 
     # Apply --since filter
     if args.since:
@@ -820,7 +843,8 @@ def cmd_search(args: argparse.Namespace) -> None:
             if match.timestamp
             else ""
         )
-        match_type = green("[prompt]") if match.type == "prompt" else dim("[response]")
+        type_labels = {"prompt": green("[prompt]"), "subagent": yellow("[subagent]")}
+        match_type = type_labels.get(match.type, dim("[response]"))
         snippet = highlight_match(match.text, query)
         print(f"{uuid_short} | {ts} | {match_type}")
         print(f"  {snippet}")
@@ -829,7 +853,8 @@ def cmd_search(args: argparse.Namespace) -> None:
     # Next-action hint
     if matches:
         first = matches[0]
-        print(dim(f"  > response {first.uuid[:8]}"))
+        hint = f"transcript {first.uuid[:8]}" if first.type == "subagent" else f"response {first.uuid[:8]}"
+        print(dim(f"  > {hint}"))
 
 
 def get_recent_session_ids(project_dir: Path, count: int = 10) -> list[str]:
@@ -971,6 +996,12 @@ def main() -> None:
         "agent_id", nargs="?", help="Agent ID prefix for detail view"
     )
     subagents_parser.add_argument(
+        "--session", help="Filter by session ID prefix"
+    )
+    subagents_parser.add_argument(
+        "--since", help="Show subagents since (e.g., 3d, 1w, 24h, today, 2024-01-15)"
+    )
+    subagents_parser.add_argument(
         "--cwd", help="Working directory path to find project for"
     )
     subagents_parser.add_argument(
@@ -983,7 +1014,7 @@ def main() -> None:
     )
     transcript_parser.add_argument(
         "identifier",
-        help="Session ID, prev/prev-N, or session:window (e.g., prev, 977a21c6:0)",
+        help="Session ID, agent ID, prev/prev-N, or session:window (e.g., prev, 977a21c6:0, a63fc3a)",
     )
     transcript_parser.add_argument(
         "--prompts-only",

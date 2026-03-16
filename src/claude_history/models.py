@@ -144,7 +144,7 @@ class SubagentMetadata:
 
 @dataclass(frozen=True, slots=True)
 class SearchMatch:
-    type: Literal["prompt", "response"]
+    type: Literal["prompt", "response", "subagent"]
     uuid: str
     session_id: str
     timestamp: datetime | None

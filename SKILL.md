@@ -116,7 +116,7 @@ The lead's final context window typically contains the synthesis — merged conc
 | `sessions` | List recent sessions with prompt/context-window counts |
 | `sessions --since 3d` | Filter by time (`3d`, `1w`, `24h`, `today`, `2024-01-15`) |
 | `sessions --page N --size N` | Paginate (default: 10 per page) |
-| `search QUERY` | Search prompts + responses across all sessions |
+| `search QUERY` | Search prompts + responses across all sessions and subagents |
 | `search QUERY --since 1w` | Search with time filter |
 | `search -p QUERY` | Search prompts only (faster) |
 
@@ -132,6 +132,7 @@ The lead's final context window typically contains the synthesis — merged conc
 | `transcript SESSION --show-hooks` | Show hook errors and hook context inline |
 | `transcript SESSION --hide-tools` | Text only (no tool calls) |
 | `transcript SESSION --show-system` | + team protocol messages (idle, shutdown) |
+| `transcript AGENT_ID` | Full subagent transcript (accepts hex agent ID) |
 
 ### Individual Response Commands
 
@@ -148,6 +149,8 @@ The lead's final context window typically contains the synthesis — merged conc
 |---------|-------------|
 | `subagents` | List subagent threads (model, duration, errors) |
 | `subagents AGENT_ID` | Detail: prompt, tool timeline, tokens, errors |
+| `subagents --session PREFIX` | Filter subagents by session ID prefix |
+| `subagents --since 1d` | Filter subagents by time |
 
 ## Session References
 

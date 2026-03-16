@@ -115,7 +115,7 @@ class TestExtractErrorTexts:
         }
         assert _extract_error_texts(record) == []
 
-    def test_truncates_long_error(self) -> None:
+    def test_preserves_full_error(self) -> None:
         record = {
             "message": {
                 "content": [
@@ -124,7 +124,7 @@ class TestExtractErrorTexts:
             }
         }
         errors = _extract_error_texts(record)
-        assert len(errors[0]) == 200
+        assert len(errors[0]) == 500
 
     def test_empty_content(self) -> None:
         assert _extract_error_texts({"message": {"content": []}}) == []

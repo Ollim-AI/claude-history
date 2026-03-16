@@ -164,6 +164,18 @@ def get_session_conversations(
     return records
 
 
+def find_subagent_file(project_dir: Path, agent_id_prefix: str) -> Path | None:
+    """Find a subagent file by agent_id prefix (hex hash).
+
+    Returns the first matching file, or None.
+    """
+    for path in project_dir.glob("*/subagents/agent-*.jsonl"):
+        stem_id = path.stem.replace("agent-", "")
+        if stem_id.startswith(agent_id_prefix):
+            return path
+    return None
+
+
 def parse_subagent_file(filepath: Path) -> list[dict]:
     """Parse a subagent JSONL file fully (no progress filtering).
 

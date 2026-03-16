@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import argparse
 from datetime import datetime
 from pathlib import Path
 
 from claude_history.io import parse_subagent_file
 from claude_history.models import (
     DT_MIN,
+    SearchMatch,
     SubagentMetadata,
     ToolInfo,
     extract_content_text,
@@ -68,7 +70,7 @@ def _extract_error_texts(record: dict) -> list[str]:
         ):
             result_text = block.get("content", "")
             if isinstance(result_text, str):
-                errors.append(result_text[:200])
+                errors.append(result_text)
     return errors
 
 
@@ -163,3 +165,144 @@ def get_subagents(project_dir: Path) -> list[SubagentMetadata]:
 
     subagents.sort(key=lambda x: x.latest_timestamp or DT_MIN, reverse=True)
     return subagents
+
+
+def search_subagent_files(
+    files: list[Path], query: str, case_sensitive: bool
+) -> list[SearchMatch]:
+    """Search subagent files for matching text in prompts and assistant responses.
+
+    Subagent files don't have normal user prompts (first record is string content,
+    rest are tool results). This does a direct scan of all text content.
+    """
+    compare = (lambda t: t) if case_sensitive else (lambda t: t.lower())
+    q = compare(query)
+    matches: list[SearchMatch] = []
+
+    for filepath in files:
+        records = parse_subagent_file(filepath)
+        if not records:
+            continue
+        agent_id = filepath.stem.replace("agent-", "")
+        # Collect all text from the subagent
+        texts: list[str] = []
+        earliest_ts = None
+        session_id = ""
+        for r in records:
+            if not session_id:
+                session_id = r.get("sessionId", "")
+            dt = parse_timestamp(r.get("timestamp"))
+            if dt and (earliest_ts is None or dt < earliest_ts):
+                earliest_ts = dt
+            if r.get("type") == "user":
+                content = r.get("message", {}).get("content", "")
+                if isinstance(content, str):
+                    texts.append(content)
+                else:
+                    texts.append(extract_content_text(content))
+            elif r.get("type") == "assistant":
+                content = r.get("message", {}).get("content", [])
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            texts.append(block.get("text", ""))
+
+        full_text = " ".join(texts)
+        if q in compare(full_text):
+            matches.append(
+                SearchMatch(
+                    type="subagent",
+                    uuid=agent_id,
+                    session_id=session_id,
+                    timestamp=earliest_ts,
+                    text=full_text,
+                )
+            )
+
+    matches.sort(key=lambda m: m.timestamp or DT_MIN, reverse=True)
+    return matches
+
+
+def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None:
+    """Render a full subagent transcript using the same display logic as session transcripts."""
+    from claude_history.chain import (
+        extract_ordered_content,
+        extract_user_prompts,
+        get_full_response,
+    )
+    from claude_history.render import (
+        bold,
+        cyan,
+        cyan_bold,
+        dim,
+        format_local,
+        green,
+        render_blocks,
+        yellow,
+    )
+
+    records: list[dict | object] = parse_subagent_file(filepath)
+    if not records:
+        print("No records found in subagent file.")
+        return
+
+    agent_id = filepath.stem.replace("agent-", "")
+    show_thinking = args.show_thinking
+    show_tools = not args.hide_tools
+    show_tool_results = args.show_tool_results
+    show_hooks = getattr(args, "show_hooks", False)
+    prompts_only = args.prompts_only
+
+    # Header
+    model = ""
+    for r in records:
+        if isinstance(r, dict) and r.get("type") == "assistant":
+            model = r.get("message", {}).get("model", "")
+            break
+    print(f"Subagent: {cyan(agent_id)}  |  {dim(model)}")
+    print(f"File: {dim(str(filepath))}\n")
+
+    # In subagent files, the first user record is the spawn prompt (string content).
+    # extract_user_prompts filters it out. Handle it directly.
+    first_user = None
+    for r in records:
+        if isinstance(r, dict) and r.get("type") == "user":
+            first_user = r
+            break
+
+    if first_user is None:
+        print("No records found.")
+        return
+
+    # Show the spawn prompt
+    prompt_uuid = first_user.get("uuid", "")
+    msg = first_user.get("message", {})
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        prompt_text = content
+    else:
+        prompt_text = extract_content_text(content)
+    ts = parse_timestamp(first_user.get("timestamp"))
+    ts_str = dim(format_local(ts, "%Y-%m-%d %H:%M")) if ts else ""
+    print(f"{cyan_bold('[prompt]')} {ts_str}")
+    print(prompt_text)
+    print()
+
+    if not prompts_only:
+        chain = get_full_response(records, prompt_uuid)
+        if chain:
+            blocks = extract_ordered_content(chain, records, include_tool_results=show_tool_results or show_hooks)
+            print(green("[assistant]"))
+            if not render_blocks(
+                blocks,
+                {},
+                show_thinking=show_thinking,
+                show_tools=show_tools,
+                show_tool_results=show_tool_results,
+                show_hooks=show_hooks,
+            ):
+                print(dim("(no text content)"))
+                print()
+
+        print(dim("---"))
+        print()

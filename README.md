@@ -56,8 +56,9 @@ claude-history <command> [options]
 | `transcript SESSION` | Full conversation: prompts + responses + tool calls |
 | `transcript SESSION:N` | Transcript for a specific context window |
 | `transcript SESSION --prompts-only` | View user prompts only |
+| `transcript AGENT_ID` | Full subagent transcript (accepts hex agent ID) |
 | `response UUID` | Read Claude's response to a prompt |
-| `search QUERY` | Search for text across all sessions (prompts + responses) |
+| `search QUERY` | Search for text across all sessions and subagents |
 | `search -p QUERY` | Search prompts only (faster) |
 | `subagents` | List subagent threads with model, duration, and errors |
 | `subagents AGENT_ID` | Detail view: prompt, tool timeline, tokens, errors |
@@ -122,4 +123,10 @@ claude-history response 1240dbfc
 
 # Full transcript from 2 sessions ago, text only
 claude-history transcript prev-2 --hide-tools
+
+# List subagents from a specific session
+claude-history subagents --session 9aaedc03
+
+# Read a subagent's full transcript with thinking
+claude-history transcript a63fc3a --show-thinking
 ```
