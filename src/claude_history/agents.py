@@ -9,6 +9,7 @@ from pathlib import Path
 from claude_history.io import parse_jsonl_file, parse_subagent_file
 from claude_history.models import (
     DT_MIN,
+    STOP_HOOK_FEEDBACK_PREFIX,
     SearchMatch,
     SubagentMetadata,
     ToolInfo,
@@ -126,6 +127,10 @@ def extract_subagent_metadata(filepath: Path, records: list[dict]) -> SubagentMe
 
         elif record.get("type") == "user":
             errors.extend(_extract_error_texts(record))
+            # Detect stop hook feedback (plain-string user records from SubagentStop hooks)
+            user_content = record.get("message", {}).get("content", "")
+            if isinstance(user_content, str) and user_content.startswith(STOP_HOOK_FEEDBACK_PREFIX):
+                errors.append(user_content)
 
     duration = None
     if earliest_ts and latest_ts:
@@ -234,10 +239,29 @@ def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None
         yellow,
     )
 
-    records: list[dict | object] = parse_jsonl_file(filepath, include_progress_stubs=True)
-    if not records:
+    all_records = parse_subagent_file(filepath)
+    if not all_records:
         print("No records found in subagent file.")
         return
+
+    # Separate hook_progress records from the rest for rendering
+    hook_records = [
+        r for r in all_records
+        if r.get("type") == "progress" and r.get("data", {}).get("type") == "hook_progress"
+    ]
+    # Build record list compatible with chain traversal (non-progress + progress stubs)
+    from claude_history.models import ProgressStub
+    records: list[dict | object] = []
+    for r in all_records:
+        if r.get("type") == "progress":
+            records.append(ProgressStub(
+                uuid=r.get("uuid", ""),
+                parentUuid=r.get("parentUuid"),
+                parentToolUseID=r.get("parentToolUseID"),
+                agentId=r.get("data", {}).get("agentId"),
+            ))
+        else:
+            records.append(r)
 
     agent_id = filepath.stem.replace("agent-", "")
     show_thinking = args.show_thinking
@@ -283,8 +307,21 @@ def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None
 
     if not prompts_only:
         chain = get_full_response(records, prompt_uuid)
+        # Some subagent files have two consecutive user records at the start
+        # (spawn prompt + system context). If the first has no assistant child,
+        # try the next user record.
+        if not chain:
+            for r in records:
+                if isinstance(r, dict) and r.get("type") == "user" and r.get("uuid") != prompt_uuid:
+                    chain = get_full_response(records, r["uuid"])
+                    if chain:
+                        break
         if chain:
-            blocks = extract_ordered_content(chain, records, include_tool_results=show_tool_results or show_hooks)
+            blocks = extract_ordered_content(
+                chain, records,
+                include_tool_results=show_tool_results or show_hooks,
+                hook_records=hook_records if show_hooks else None,
+            )
             print(green("[assistant]"))
             if not render_blocks(
                 blocks,

@@ -14,6 +14,7 @@ from claude_history.models import (
     _YELLOW,
     HOOK_ERROR_RE,
     ContentBlock,
+    HookEvent,
     TaskNotification,
     ToolResultContent,
     ToolUseContent,
@@ -245,6 +246,16 @@ def render_blocks(
                     print(dim(json.dumps(content.content, indent=2)))
                 print()
                 prev_type = "tool_result"
+
+        elif block_type == "hook":
+            if show_hooks:
+                has_output = True
+                assert isinstance(content, HookEvent)
+                print(yellow(f"[hook: {content.hook_name}]"))
+                if show_tool_results:
+                    print(dim(content.command))
+                    print()
+                prev_type = "hook"
 
         elif block_type == "notification":
             has_output = True

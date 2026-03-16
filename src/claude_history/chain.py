@@ -9,6 +9,7 @@ from claude_history.models import (
     DT_MIN,
     HOOK_ERROR_RE,
     ContentBlock,
+    HookEvent,
     ProgressStub,
     Prompt,
     Record,
@@ -429,6 +430,7 @@ def extract_ordered_content(
     *,
     include_tool_results: bool = False,
     notification_map: dict[str, TaskNotification] | None = None,
+    hook_records: list[dict] | None = None,
 ) -> list[ContentBlock]:
     """Extract all content blocks from chain in order.
 
@@ -491,6 +493,33 @@ def extract_ordered_content(
                 )
                 if tool_id:
                     tool_use_ids[tool_id] = len(blocks) - 1
+
+    # Insert hook events after their corresponding tool_use blocks
+    if hook_records and tool_use_ids:
+        hooks_by_tool: dict[str, list[HookEvent]] = {}
+        trailing_hooks: list[HookEvent] = []
+        for hr in hook_records:
+            data = hr.get("data", {})
+            event = HookEvent(
+                hook_name=data.get("hookName", ""),
+                hook_event=data.get("hookEvent", ""),
+                command=data.get("command", "") or data.get("promptText", ""),
+            )
+            ptid = hr.get("parentToolUseID", "")
+            if ptid in tool_use_ids:
+                hooks_by_tool.setdefault(ptid, []).append(event)
+            else:
+                trailing_hooks.append(event)
+
+        hook_inserts: list[tuple[int, ContentBlock]] = []
+        for tool_id, idx in tool_use_ids.items():
+            for he in hooks_by_tool.get(tool_id, []):
+                hook_inserts.append((idx + 1, ContentBlock(type="hook", content=he)))
+        for idx, block in sorted(hook_inserts, key=lambda x: x[0], reverse=True):
+            blocks.insert(idx, block)
+
+        for he in trailing_hooks:
+            blocks.append(ContentBlock(type="hook", content=he))
 
     # If requested, find tool results and insert after their tool_use
     if include_tool_results and records and tool_use_ids:

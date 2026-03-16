@@ -17,7 +17,7 @@ _CYAN = "\033[36m"
 _YELLOW = "\033[33m"
 _GREEN = "\033[32m"
 
-BlockType = Literal["thinking", "text", "tool_use", "tool_result", "notification"]
+BlockType = Literal["thinking", "text", "tool_use", "tool_result", "notification", "hook"]
 
 HOOK_ERROR_RE = re.compile(r"^(PreToolUse|PostToolUse):\w+ hook error:", re.MULTILINE)
 _HOOK_CONTEXT_RE = re.compile(
@@ -95,6 +95,16 @@ class Session:
 
 
 @dataclass(frozen=True, slots=True)
+class HookEvent:
+    hook_name: str  # e.g. "PreToolUse:Read", "SubagentStop"
+    hook_event: str  # e.g. "PreToolUse", "SubagentStop"
+    command: str  # hook command or prompt text
+
+
+STOP_HOOK_FEEDBACK_PREFIX = "Stop hook feedback:"
+
+
+@dataclass(frozen=True, slots=True)
 class ToolUseContent:
     id: str
     name: str
@@ -110,7 +120,7 @@ class ToolResultContent:
 @dataclass(frozen=True, slots=True)
 class ContentBlock:
     type: BlockType
-    content: str | ToolUseContent | ToolResultContent | TaskNotification
+    content: str | ToolUseContent | ToolResultContent | TaskNotification | HookEvent
 
 
 @dataclass(frozen=True, slots=True)
