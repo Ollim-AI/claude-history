@@ -6,7 +6,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-from claude_history.io import parse_subagent_file
+from claude_history.io import parse_jsonl_file, parse_subagent_file
 from claude_history.models import (
     DT_MIN,
     SearchMatch,
@@ -247,7 +247,7 @@ def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None
         yellow,
     )
 
-    records: list[dict | object] = parse_subagent_file(filepath)
+    records: list[dict | object] = parse_jsonl_file(filepath, include_progress_stubs=True)
     if not records:
         print("No records found in subagent file.")
         return

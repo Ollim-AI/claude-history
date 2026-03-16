@@ -212,26 +212,34 @@ def get_full_response(records: list[Record], prompt_uuid: str) -> list[dict]:
                 current_uuid = progress_child
                 continue
 
-            # 2. Follow progress sibling of parent (handles Skill/Task
-            #    tool responses where the chain bridges through subagents).
-            current_record = record_map.get(current_uuid)
-            if current_record is None:
-                break
-            parent_uuid = (
-                current_record.parentUuid
-                if isinstance(current_record, ProgressStub)
-                else current_record.get("parentUuid")
-            )
-            if not parent_uuid:
-                break
-            progress_uuid = _find_progress_sibling(
-                children_map.get(parent_uuid, []), visited
-            )
-            if not progress_uuid:
-                break
-            visited.add(progress_uuid)
-            current_uuid = progress_uuid
-            continue
+            # 2. Walk up parent chain looking for unvisited progress siblings.
+            #    One level handles Skill/Task bridges; multiple levels handle
+            #    parallel tool_use chains where the progress fork is on a
+            #    grandparent (e.g., tool_result → assistant → progress chain).
+            ancestor = record_map.get(current_uuid)
+            found_progress = False
+            for _ in range(10):  # bounded walk-up
+                if ancestor is None:
+                    break
+                parent_uuid = (
+                    ancestor.parentUuid
+                    if isinstance(ancestor, ProgressStub)
+                    else ancestor.get("parentUuid")
+                )
+                if not parent_uuid:
+                    break
+                progress_uuid = _find_progress_sibling(
+                    children_map.get(parent_uuid, []), visited
+                )
+                if progress_uuid:
+                    visited.add(progress_uuid)
+                    current_uuid = progress_uuid
+                    found_progress = True
+                    break
+                ancestor = record_map.get(parent_uuid)
+            if found_progress:
+                continue
+            break
 
         # Stop at user prompts with text content (new conversation turn)
         if is_user_text_prompt(next_record):

@@ -71,6 +71,31 @@ class TestProgressChainTraversal:
         uuids = [r["uuid"] for r in chain]
         assert uuids == ["A", "B", "D"]
 
+    def test_parallel_tools_with_grandparent_progress_fork(self) -> None:
+        """Parallel tool calls where the progress fork is on a grandparent.
+
+        Real pattern from subagent files:
+        assistant(tool_use B) -> user(tool_result C) -> ProgressStub(hook) [dead end]
+                              -> ProgressStub P1 -> P2 -> assistant(tool_use D) -> user(tool_result E)
+        The dead end at C's hook_progress child requires walking up TWO levels
+        (C -> B) to find the progress fork P1.
+        """
+        records: list = [
+            _user("prompt", "", text="do stuff"),
+            _assistant("A", "prompt", text="Starting"),
+            _assistant("B", "A", tool_name="Read"),
+            _stub("P1", "B"),         # progress fork starts at B
+            _stub("P2", "P1"),        # -> leads to parallel tool_use D
+            _assistant("D", "P2", tool_name="Grep"),
+            _user("C", "B", is_tool_result=True),   # tool_result for B
+            _stub("H1", "C"),         # hook_progress child of C (dead end)
+            _user("E", "D", is_tool_result=True),    # tool_result for D
+            _assistant("F", "E", text="Done"),
+        ]
+        chain = get_full_response(records, "prompt")
+        uuids = [r["uuid"] for r in chain]
+        assert uuids == ["A", "B", "D", "F"]
+
     def test_stops_at_user_text_prompt(self) -> None:
         """Chain stops when a real user prompt is encountered."""
         records: list = [
