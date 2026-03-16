@@ -184,32 +184,19 @@ def search_subagent_files(
         if not records:
             continue
         agent_id = filepath.stem.replace("agent-", "")
-        session_id = ""
-        earliest_ts = None
+        session_id = records[0].get("sessionId", "")
+        earliest_ts = parse_timestamp(records[0].get("timestamp"))
         matched_text = ""
 
         for r in records:
-            if not session_id:
-                session_id = r.get("sessionId", "")
-            dt = parse_timestamp(r.get("timestamp"))
-            if dt and (earliest_ts is None or dt < earliest_ts):
-                earliest_ts = dt
-
             if matched_text:
-                continue  # Already matched, just collecting metadata
+                break
 
             # Extract text from this record only
             text = ""
-            if r.get("type") == "user":
+            if r.get("type") in ("user", "assistant"):
                 content = r.get("message", {}).get("content", "")
                 text = content if isinstance(content, str) else extract_content_text(content)
-            elif r.get("type") == "assistant":
-                content = r.get("message", {}).get("content", [])
-                if isinstance(content, list):
-                    text = " ".join(
-                        b.get("text", "") for b in content
-                        if isinstance(b, dict) and b.get("type") == "text"
-                    )
 
             if text and q in compare(text):
                 matched_text = text
