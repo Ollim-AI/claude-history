@@ -172,8 +172,8 @@ def search_subagent_files(
 ) -> list[SearchMatch]:
     """Search subagent files for matching text in prompts and assistant responses.
 
-    Subagent files don't have normal user prompts (first record is string content,
-    rest are tool results). This does a direct scan of all text content.
+    Searches record-by-record and stores only a snippet around the match
+    to avoid unbounded memory from concatenating all text.
     """
     compare = (lambda t: t) if case_sensitive else (lambda t: t.lower())
     q = compare(query)
@@ -184,38 +184,44 @@ def search_subagent_files(
         if not records:
             continue
         agent_id = filepath.stem.replace("agent-", "")
-        # Collect all text from the subagent
-        texts: list[str] = []
-        earliest_ts = None
         session_id = ""
+        earliest_ts = None
+        matched_text = ""
+
         for r in records:
             if not session_id:
                 session_id = r.get("sessionId", "")
             dt = parse_timestamp(r.get("timestamp"))
             if dt and (earliest_ts is None or dt < earliest_ts):
                 earliest_ts = dt
+
+            if matched_text:
+                continue  # Already matched, just collecting metadata
+
+            # Extract text from this record only
+            text = ""
             if r.get("type") == "user":
                 content = r.get("message", {}).get("content", "")
-                if isinstance(content, str):
-                    texts.append(content)
-                else:
-                    texts.append(extract_content_text(content))
+                text = content if isinstance(content, str) else extract_content_text(content)
             elif r.get("type") == "assistant":
                 content = r.get("message", {}).get("content", [])
                 if isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            texts.append(block.get("text", ""))
+                    text = " ".join(
+                        b.get("text", "") for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
 
-        full_text = " ".join(texts)
-        if q in compare(full_text):
+            if text and q in compare(text):
+                matched_text = text
+
+        if matched_text:
             matches.append(
                 SearchMatch(
                     type="subagent",
                     uuid=agent_id,
                     session_id=session_id,
                     timestamp=earliest_ts,
-                    text=full_text,
+                    text=matched_text,
                 )
             )
 

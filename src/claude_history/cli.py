@@ -654,15 +654,25 @@ def cmd_sessions(args: argparse.Namespace) -> None:
 
 
 def prefilter_files(
-    project_dir: Path, query: str, case_sensitive: bool = False
+    project_dir: Path,
+    query: str,
+    case_sensitive: bool = False,
+    since_dt: datetime | None = None,
 ) -> list[Path]:
     """Use grep to find JSONL files containing the query in non-progress records.
 
     Pipes grep -v to exclude progress records (which contain embedded conversation
     text from subagent context and cause false positives), then checks for the query.
+
+    Args:
+        since_dt: If provided, skip files whose mtime is before this datetime.
+            Applied before grep to avoid spawning subprocesses for old files.
     """
     jsonl_files = list(project_dir.glob("*.jsonl"))
     jsonl_files.extend(project_dir.glob("*/subagents/agent-*.jsonl"))
+    if since_dt:
+        cutoff = since_dt.timestamp()
+        jsonl_files = [f for f in jsonl_files if f.stat().st_mtime >= cutoff]
     if not jsonl_files:
         return []
     matching = []
@@ -796,8 +806,11 @@ def cmd_search(args: argparse.Namespace) -> None:
         if compare_q in (f.stem if case_sensitive else f.stem.lower())
     ]
 
+    # Apply --since early to avoid scanning old files
+    since_dt = parse_since(args.since) if args.since else None
+
     # Pre-filter files with grep for content matches
-    matching_files = prefilter_files(project_dir, query, case_sensitive)
+    matching_files = prefilter_files(project_dir, query, case_sensitive, since_dt)
     session_files = [f for f in matching_files if "/subagents/" not in str(f)]
     subagent_files = [f for f in matching_files if "/subagents/" in str(f)]
     matches = []
@@ -816,9 +829,8 @@ def cmd_search(args: argparse.Namespace) -> None:
     if subagent_files:
         matches.extend(search_subagent_files(subagent_files, query, case_sensitive))
 
-    # Apply --since filter
-    if args.since:
-        since_dt = parse_since(args.since)
+    # Apply --since to parsed record timestamps (mtime was a coarse pre-filter)
+    if since_dt:
         matches = [m for m in matches if m.timestamp and m.timestamp >= since_dt]
 
     if not matches and not session_matches:
