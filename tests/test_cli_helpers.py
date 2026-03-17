@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from claude_history.cli import encode_path, highlight_match, parse_since, resolve_session_ref
+from claude_history.cli import encode_path, highlight_match, parse_since, resolve_session_ref, resolve_slug
 
 
 class TestParseSince:
@@ -147,3 +147,65 @@ class TestResolveSessionRef:
 
         with pytest.raises(SystemExit):
             resolve_session_ref("prev-5", tmp_path)
+
+    def test_slug_resolved(self, tmp_path: Path) -> None:
+        sid = "abcd1234-0000-0000-0000-000000000000"
+        f = tmp_path / f"{sid}.jsonl"
+        f.write_text(json.dumps({"sessionId": sid, "type": "user", "slug": "keen-mapping-torvalds"}) + "\n")
+
+        prefix, window = resolve_session_ref("keen-mapping-torvalds", tmp_path)
+        assert prefix == sid[:8]
+        assert window is None
+
+    def test_slug_with_window(self, tmp_path: Path) -> None:
+        sid = "abcd1234-0000-0000-0000-000000000000"
+        f = tmp_path / f"{sid}.jsonl"
+        f.write_text(json.dumps({"sessionId": sid, "type": "user", "slug": "keen-mapping-torvalds"}) + "\n")
+
+        prefix, window = resolve_session_ref("keen-mapping-torvalds:2", tmp_path)
+        assert prefix == sid[:8]
+        assert window == 2
+
+    def test_slug_not_found_exits(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit):
+            resolve_session_ref("nonexistent-slug-name", tmp_path)
+
+    def test_hex_identifier_not_treated_as_slug(self) -> None:
+        """Identifiers with only hex chars should pass through as UUID prefixes."""
+        prefix, window = resolve_session_ref("abcdef12", Path("/nonexistent"))
+        assert prefix == "abcdef12"
+        assert window is None
+
+
+class TestResolveSlug:
+    def test_finds_slug(self, tmp_path: Path) -> None:
+        sid = "aaaa1111-2222-3333-4444-555566667777"
+        f = tmp_path / f"{sid}.jsonl"
+        f.write_text(json.dumps({"sessionId": sid, "type": "user", "slug": "playful-rolling-falcon"}) + "\n")
+
+        result = resolve_slug("playful-rolling-falcon", tmp_path)
+        assert result == sid
+
+    def test_returns_none_when_not_found(self, tmp_path: Path) -> None:
+        f = tmp_path / "session.jsonl"
+        f.write_text(json.dumps({"sessionId": "aaa", "type": "user", "slug": "other-slug"}) + "\n")
+
+        result = resolve_slug("nonexistent-slug", tmp_path)
+        assert result is None
+
+    def test_slug_on_later_line(self, tmp_path: Path) -> None:
+        """Slug may not be on the first line (e.g., file-history-snapshot first)."""
+        sid = "bbbb2222-3333-4444-5555-666677778888"
+        f = tmp_path / f"{sid}.jsonl"
+        lines = [
+            json.dumps({"type": "file-history-snapshot", "messageId": "xyz"}),
+            json.dumps({"sessionId": sid, "type": "user", "slug": "snug-drifting-muffin"}),
+        ]
+        f.write_text("\n".join(lines) + "\n")
+
+        result = resolve_slug("snug-drifting-muffin", tmp_path)
+        assert result == sid
+
+    def test_empty_dir(self, tmp_path: Path) -> None:
+        result = resolve_slug("any-slug", tmp_path)
+        assert result is None

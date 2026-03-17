@@ -904,12 +904,13 @@ def get_recent_session_ids(project_dir: Path, count: int = 10) -> list[str]:
 
 def resolve_slug(slug: str, project_dir: Path) -> str | None:
     """Find a session ID by slug. Single recursive grep for speed."""
+    # Match both compact ("slug":"x") and spaced ("slug": "x") JSON
     result = subprocess.run(
-        ["grep", "-F", "-r", "-m", "1", f'"slug":"{slug}"', str(project_dir)],
+        ["grep", "-r", "-m", "1", "-E", f'"slug":\\s*"{slug}"', str(project_dir)],
         capture_output=True, text=True, timeout=10,
     )
     if result.returncode == 0 and result.stdout:
-        m = re.search(r'"sessionId":"([^"]+)"', result.stdout)
+        m = re.search(r'"sessionId":\s*"([^"]+)"', result.stdout)
         if m:
             return m.group(1)
     return None
