@@ -593,6 +593,7 @@ def _render_session_line(session, use_iso: bool) -> str:
         if len(first_text) > 50:
             first_text = first_text[:50] + "..."
         desc = f" | {dim(first_text)}"
+    slug_str = f" {bold(session.slug)}" if session.slug else ""
     team_badge = ""
     if session.team_names:
         names = ", ".join(sorted(session.team_names))
@@ -600,7 +601,7 @@ def _render_session_line(session, use_iso: bool) -> str:
     hook_badge = ""
     if session.hook_error_count:
         hook_badge = f" | {yellow(f'[{session.hook_error_count} hook err]')}"
-    return f"{session_short} | {ts_str} | {yellow(prompt_count)} {prompt_word} | {yellow(window_count)} ctx{team_badge}{hook_badge}{desc}"
+    return f"{session_short}{slug_str} | {ts_str} | {yellow(prompt_count)} {prompt_word} | {yellow(window_count)} ctx{team_badge}{hook_badge}{desc}"
 
 
 def cmd_sessions(args: argparse.Namespace) -> None:
