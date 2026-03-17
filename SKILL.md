@@ -2,6 +2,7 @@
 name: claude-history
 description: Deep investigation tool for past Claude Code sessions. Use when you need to understand what work was done, reconstruct decisions, find prior implementations, or build context from previous sessions. Goes beyond listing — reads full transcripts.
 allowed-tools: Bash(claude-history:*), Read
+context: fork
 ---
 
 # Claude History
