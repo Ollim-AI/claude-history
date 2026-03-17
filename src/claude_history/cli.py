@@ -902,6 +902,24 @@ def get_recent_session_ids(project_dir: Path, count: int = 10) -> list[str]:
     return session_ids
 
 
+def resolve_slug(slug: str, project_dir: Path) -> str | None:
+    """Find a session ID by slug. Uses grep for speed."""
+    needle = f'"slug":"{slug}"'
+    for f in project_dir.glob("*.jsonl"):
+        try:
+            result = subprocess.run(
+                ["grep", "-F", "-m", "1", needle, str(f)],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout:
+                m = re.search(r'"sessionId":"([^"]+)"', result.stdout)
+                if m:
+                    return m.group(1)
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return None
+
+
 def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | None]:
     """Resolve a session reference like 'prev', 'prev-2', 'prev-3:1', or a UUID prefix.
 
@@ -922,6 +940,13 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
             print("Error: prev-N requires N >= 1 (prev-1 = previous session).")
             sys.exit(1)
     else:
+        # Check if identifier is a slug (contains non-hex alpha chars)
+        if re.search(r'[g-zG-Z]', identifier):
+            sid = resolve_slug(identifier, project_dir)
+            if sid:
+                return (sid[:8], ctx_window)
+            print(f"Error: No session found with slug '{identifier}'")
+            sys.exit(1)
         return (identifier, ctx_window)
 
     session_ids = get_recent_session_ids(project_dir, count=n + 1)
