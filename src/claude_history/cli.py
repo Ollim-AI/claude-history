@@ -593,7 +593,8 @@ def _render_session_line(session, use_iso: bool) -> str:
         if len(first_text) > 50:
             first_text = first_text[:50] + "..."
         desc = f" | {dim(first_text)}"
-    slug_str = f" {bold(session.slug)}" if session.slug else ""
+    name = session.custom_title or session.slug
+    slug_str = f" {bold(name)}" if name else ""
     team_badge = ""
     if session.team_names:
         names = ", ".join(sorted(session.team_names))
@@ -902,17 +903,18 @@ def get_recent_session_ids(project_dir: Path, count: int = 10) -> list[str]:
     return session_ids
 
 
-def resolve_slug(slug: str, project_dir: Path) -> str | None:
-    """Find a session ID by slug. Single recursive grep for speed."""
-    result = subprocess.run(
-        ["grep", "-F", "-r", "-m", "1", "--include=*.jsonl",
-         f'"slug":"{slug}"', str(project_dir)],
-        capture_output=True, text=True, timeout=10,
-    )
-    if result.returncode == 0 and result.stdout:
-        m = re.search(r'"sessionId":"([^"]+)"', result.stdout)
-        if m:
-            return m.group(1)
+def resolve_slug(name: str, project_dir: Path) -> str | None:
+    """Find a session ID by slug or custom title. Single recursive grep for speed."""
+    for needle in [f'"customTitle":"{name}"', f'"slug":"{name}"']:
+        result = subprocess.run(
+            ["grep", "-F", "-r", "-m", "1", "--include=*.jsonl",
+             needle, str(project_dir)],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout:
+            m = re.search(r'"sessionId":"([^"]+)"', result.stdout)
+            if m:
+                return m.group(1)
     return None
 
 

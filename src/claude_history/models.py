@@ -89,6 +89,7 @@ class Session:
     implicit_boundaries: set[datetime] = field(default_factory=set)
     explicit_boundaries: set[datetime] = field(default_factory=set)
     slug: str | None = None
+    custom_title: str | None = None
     first_prompt: tuple[datetime, str] | None = None
     team_names: set[str] = field(default_factory=set)
     hook_error_count: int = 0

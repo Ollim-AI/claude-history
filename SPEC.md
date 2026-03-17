@@ -774,6 +774,25 @@ Short session title used for terminal window names. Minimal structure without uu
 
 ---
 
+### 8. Custom Title Record (`type: "custom-title"`)
+
+User-set session name via `claude --resume "name"` or `claude --name "name"`. Minimal structure with only `type`, `customTitle`, and `sessionId`.
+
+```json
+{
+  "type": "custom-title",
+  "customTitle": "mintlify-skill-auto-improve",
+  "sessionId": "9414f68c-5327-4dda-a1c9-2c4421a1172d"
+}
+```
+
+**Notes:**
+- `customTitle` is user-chosen (not auto-generated like `slug`)
+- May appear multiple times in a file (observed duplicates)
+- Used by `claude --resume` to find sessions by friendly name
+
+---
+
 ## Common Fields Reference
 
 ### Required on Most Records

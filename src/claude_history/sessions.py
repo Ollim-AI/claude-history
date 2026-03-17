@@ -152,6 +152,11 @@ def _accumulate_session_record(sess: Session, record: dict) -> None:
     if slug and not sess.slug:
         sess.slug = slug
 
+    # Capture custom title (user-set session name via --resume/--name)
+    if record_type == "custom-title":
+        sess.custom_title = record.get("customTitle")
+        return
+
     if record_type != "user":
         return
     if record.get("isCompactSummary"):
