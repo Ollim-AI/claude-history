@@ -151,7 +151,7 @@ class TestResolveSessionRef:
     def test_slug_resolved(self, tmp_path: Path) -> None:
         sid = "abcd1234-0000-0000-0000-000000000000"
         f = tmp_path / f"{sid}.jsonl"
-        f.write_text(json.dumps({"sessionId": sid, "type": "user", "slug": "keen-mapping-torvalds"}) + "\n")
+        f.write_text(json.dumps({"sessionId": sid, "type": "user", "slug": "keen-mapping-torvalds"}, separators=(",", ":")) + "\n")
 
         prefix, window = resolve_session_ref("keen-mapping-torvalds", tmp_path)
         assert prefix == sid[:8]
@@ -160,7 +160,7 @@ class TestResolveSessionRef:
     def test_slug_with_window(self, tmp_path: Path) -> None:
         sid = "abcd1234-0000-0000-0000-000000000000"
         f = tmp_path / f"{sid}.jsonl"
-        f.write_text(json.dumps({"sessionId": sid, "type": "user", "slug": "keen-mapping-torvalds"}) + "\n")
+        f.write_text(json.dumps({"sessionId": sid, "type": "user", "slug": "keen-mapping-torvalds"}, separators=(",", ":")) + "\n")
 
         prefix, window = resolve_session_ref("keen-mapping-torvalds:2", tmp_path)
         assert prefix == sid[:8]
@@ -181,14 +181,14 @@ class TestResolveSlug:
     def test_finds_slug(self, tmp_path: Path) -> None:
         sid = "aaaa1111-2222-3333-4444-555566667777"
         f = tmp_path / f"{sid}.jsonl"
-        f.write_text(json.dumps({"sessionId": sid, "type": "user", "slug": "playful-rolling-falcon"}) + "\n")
+        f.write_text(json.dumps({"sessionId": sid, "type": "user", "slug": "playful-rolling-falcon"}, separators=(",", ":")) + "\n")
 
         result = resolve_slug("playful-rolling-falcon", tmp_path)
         assert result == sid
 
     def test_returns_none_when_not_found(self, tmp_path: Path) -> None:
         f = tmp_path / "session.jsonl"
-        f.write_text(json.dumps({"sessionId": "aaa", "type": "user", "slug": "other-slug"}) + "\n")
+        f.write_text(json.dumps({"sessionId": "aaa", "type": "user", "slug": "other-slug"}, separators=(",", ":")) + "\n")
 
         result = resolve_slug("nonexistent-slug", tmp_path)
         assert result is None
@@ -199,7 +199,7 @@ class TestResolveSlug:
         f = tmp_path / f"{sid}.jsonl"
         lines = [
             json.dumps({"type": "file-history-snapshot", "messageId": "xyz"}),
-            json.dumps({"sessionId": sid, "type": "user", "slug": "snug-drifting-muffin"}),
+            json.dumps({"sessionId": sid, "type": "user", "slug": "snug-drifting-muffin"}, separators=(",", ":")),
         ]
         f.write_text("\n".join(lines) + "\n")
 
