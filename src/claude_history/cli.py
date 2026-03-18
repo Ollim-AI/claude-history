@@ -688,17 +688,20 @@ def prefilter_files(
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
             )
-            p1.stdin.write(b'"type":"progress"\n')
-            p1.stdin.close()
-            p2 = subprocess.Popen(
-                ["grep", "-F", "-q", *case_flag, "--", query],
-                stdin=p1.stdout,
-                stdout=subprocess.PIPE,
-            )
-            p1.stdout.close()
-            p2.communicate()
-            if p2.returncode == 0:
-                matching.append(f)
+            try:
+                p1.stdin.write(b'"type":"progress"\n')
+                p1.stdin.close()
+                p2 = subprocess.Popen(
+                    ["grep", "-F", "-q", *case_flag, "--", query],
+                    stdin=p1.stdout,
+                    stdout=subprocess.PIPE,
+                )
+                p1.stdout.close()
+                p2.communicate()
+                if p2.returncode == 0:
+                    matching.append(f)
+            finally:
+                p1.wait()
         except (OSError, subprocess.SubprocessError):
             # SubprocessError catches TimeoutExpired from communicate()
             matching.append(f)  # Fallback: include file if grep fails

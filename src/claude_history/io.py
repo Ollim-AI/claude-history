@@ -58,6 +58,7 @@ def parse_jsonl_file(
             (sessions, prompts, search -p) for a major speedup.
     """
     records = []
+    skipped = 0
     try:
         # Use grep -F -f - to pipe the pattern via stdin, avoiding Windows
         # argument quoting issues with double quotes in patterns
@@ -69,7 +70,6 @@ def parse_jsonl_file(
             encoding="utf-8",
             errors="replace",
         )
-        skipped = 0
         for line in result.stdout.splitlines():
             if line.strip():
                 try:

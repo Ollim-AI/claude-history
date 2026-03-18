@@ -521,6 +521,13 @@ def extract_ordered_content(
         for he in trailing_hooks:
             blocks.append(ContentBlock(type="hook", content=he))
 
+        # Recompute tool_use_ids indices — hook insertions shifted positions
+        tool_use_ids = {
+            b.content.id: i
+            for i, b in enumerate(blocks)
+            if b.type == "tool_use" and isinstance(b.content, ToolUseContent)
+        }
+
     # If requested, find tool results and insert after their tool_use
     if include_tool_results and records and tool_use_ids:
         tool_results = _collect_tool_results(records, tool_use_ids.keys())

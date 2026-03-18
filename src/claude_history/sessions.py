@@ -180,8 +180,12 @@ def _accumulate_session_record(sess: Session, record: dict) -> None:
     if not prompt_text:
         return
 
+    # Teammate-message records lack isMeta and sourceToolAssistantUUID but
+    # are not user-typed prompts (same check as chain.py:59, chain.py:124).
     is_text_prompt = (
-        not record.get("isMeta") and "sourceToolAssistantUUID" not in record
+        not record.get("isMeta")
+        and "sourceToolAssistantUUID" not in record
+        and not (isinstance(content, str) and content.startswith("<teammate-message"))
     )
     if is_text_prompt:
         sess.prompt_count += 1
