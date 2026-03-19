@@ -34,7 +34,6 @@ from claude_history.models import (
     _TEAMMATE_COLORS,
     _YELLOW,
     CLAUDE_PROJECTS_DIR,
-    DEFAULT_SEARCH_TARGETS,
     DT_MIN,
     PAGE_SIZE,
     ProgressStub,
@@ -639,7 +638,12 @@ def _parse_targets(args: argparse.Namespace) -> set[SearchTarget]:
         return {SearchTarget.PROMPTS}
     if args.responses_only:
         return {SearchTarget.RESPONSES, SearchTarget.TOOLS, SearchTarget.HOOKS}
-    return DEFAULT_SEARCH_TARGETS
+
+    valid = ", ".join(sorted(ALL_SEARCH_TARGETS))
+    print(f"Error: search requires a target. Use -T/--target, -p, or -r.")
+    print(f"  Valid targets: {valid}")
+    print(f"  Example: claude-history search \"query\" -T prompts,tools")
+    sys.exit(1)
 
 
 def cmd_search(args: argparse.Namespace) -> None:
