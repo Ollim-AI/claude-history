@@ -22,6 +22,9 @@ from claude_history.models import (
     strip_system_tags,
 )
 
+# Tools whose results are user feedback — always shown in transcripts
+FEEDBACK_TOOLS = frozenset({"AskUserQuestion", "ExitPlanMode"})
+
 
 def cyan(s: object) -> str:
     return f"{_CYAN}{s}{_RESET}"
@@ -162,6 +165,7 @@ def render_blocks(
     """
     has_output = False
     prev_type = None
+    last_tool_name = ""
     for block in blocks:
         block_type = block.type
         content = block.content
@@ -199,9 +203,10 @@ def render_blocks(
             prev_type = "text"
 
         elif block_type == "tool_use":
+            assert isinstance(content, ToolUseContent)
+            last_tool_name = content.name
             if show_tools:
                 has_output = True
-                assert isinstance(content, ToolUseContent)
                 agent_id = task_agent_map.get(content.id)
                 agent_suffix = f"  {dim(f'-> agent-{agent_id}')}" if agent_id else ""
                 if not show_tool_results:
@@ -219,7 +224,8 @@ def render_blocks(
                 prev_type = "tool_use"
 
         elif block_type == "tool_result":
-            if not show_tool_results and not show_hooks:
+            is_feedback = last_tool_name in FEEDBACK_TOOLS
+            if not show_tool_results and not show_hooks and not is_feedback:
                 continue
             assert isinstance(content, ToolResultContent)
             is_hook_error = (
@@ -228,8 +234,10 @@ def render_blocks(
                 and isinstance(content.content, str)
                 and HOOK_ERROR_RE.search(content.content) is not None
             )
-            if show_tool_results or is_hook_error:
+            if show_tool_results or is_hook_error or is_feedback:
                 has_output = True
+                if is_feedback and not show_tools:
+                    print(green(f"[{last_tool_name}]"))
                 if is_hook_error:
                     print(yellow("[hook error]"))
                 elif content.is_error:

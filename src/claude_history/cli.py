@@ -171,7 +171,7 @@ def cmd_response(args: argparse.Namespace) -> None:
 
     print(f"Response to: {cyan(user_record['uuid'][:8])} | {dim(ts_str)}\n")
 
-    blocks = extract_ordered_content(chain, records, include_tool_results=show_tool_results or show_hooks)
+    blocks = extract_ordered_content(chain, records, include_tool_results=True)
     task_agent_map = build_task_agent_map(records) if show_tools else {}
 
     if not render_blocks(
@@ -500,7 +500,7 @@ def cmd_transcript(args: argparse.Namespace) -> None:
             if not prompts_only:
                 chain = get_full_response(records, prompt.uuid)
                 if chain:
-                    blocks = extract_ordered_content(chain, records, include_tool_results=show_tool_results or show_hooks, notification_map=notif_map)
+                    blocks = extract_ordered_content(chain, records, include_tool_results=True, notification_map=notif_map)
 
                     # Team phase separators
                     for block in blocks:
