@@ -2,6 +2,12 @@
 @SKILL.md - update only when necessary, eval on real agent usage and human user feedback only
 SPEC.md - JSONL format specification; always keep updated
 
+Primary consumers are LLM agents; human use is secondary. Design for three agent constraints:
+
+- **Reliability**: CLI behavior matches documented contracts exactly — no silent failures, no ambiguous exits, no output surprises. Bugs that an agent can't self-diagnose are highest priority.
+- **Legibility**: Command structure, flag names, and error messages must be self-evident from `--help` alone. Output and errors should be actionable without requiring prior context — an agent seeing a message for the first time must know what to do next.
+- **Token economy**: Default output is minimal and progressive — summary first, detail on request. No decorative formatting, no redundant headers, no verbose confirmation messages. Subagent encapsulation keeps context windows small. Performance matters because agents pay for wall-clock time in context and latency.
+
 ## Codebase notes
 
 - `models.py` — Leaf module with zero internal imports; all other modules depend on it. ANSI codes are module-level constants shared via re-export.
