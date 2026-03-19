@@ -177,7 +177,7 @@ def search_subagent_files(
     files: list[Path],
     query: str,
     case_sensitive: bool,
-    targets: set[SearchTarget] | None = None,
+    targets: set[SearchTarget],
 ) -> list[SearchMatch]:
     """Search subagent files for matching text in the specified targets.
 
@@ -188,10 +188,10 @@ def search_subagent_files(
     q = compare(query)
     matches: list[SearchMatch] = []
     # Which record roles to search
-    search_user = targets is None or bool(
+    search_user = bool(
         targets & {SearchTarget.PROMPTS, SearchTarget.TOOL_RESULTS}
     )
-    search_assistant = targets is None or bool(
+    search_assistant = bool(
         targets & {SearchTarget.RESPONSES, SearchTarget.TOOLS, SearchTarget.THINKING, SearchTarget.HOOKS}
     )
 
@@ -209,14 +209,8 @@ def search_subagent_files(
                 break
 
             rtype = r.get("type")
-            content = r.get("message", {}).get("content", "")
-
-            if rtype == "user" and search_user:
-                text = content if isinstance(content, str) else extract_content_text(content)
-                if text and q in compare(text):
-                    matched_text = text
-
-            elif rtype == "assistant" and search_assistant:
+            if (rtype == "user" and search_user) or (rtype == "assistant" and search_assistant):
+                content = r.get("message", {}).get("content", "")
                 text = content if isinstance(content, str) else extract_content_text(content)
                 if text and q in compare(text):
                     matched_text = text

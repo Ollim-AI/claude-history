@@ -20,10 +20,8 @@ from claude_history.models import (
     Record,
     SearchMatch,
     SearchTarget,
-    _RESET,
-    _YELLOW,
 )
-from claude_history.render import format_tool_summary, truncate_text
+from claude_history.render import format_tool_summary, truncate_text, yellow
 
 
 def prefilter_files(
@@ -91,7 +89,7 @@ def highlight_match(text: str, query: str, context_chars: int = 60) -> str:
     if start > 0:
         snippet += "..."
     snippet += text_flat[start:idx]
-    snippet += _YELLOW + text_flat[idx : idx + len(query)] + _RESET
+    snippet += yellow(text_flat[idx : idx + len(query)])
     snippet += text_flat[idx + len(query) : end]
     if end < len(text_flat):
         snippet += "..."

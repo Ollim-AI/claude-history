@@ -24,7 +24,6 @@ class SearchTarget(Enum):
 
 
 ALL_SEARCH_TARGETS = {t.value for t in SearchTarget}
-DEFAULT_SEARCH_TARGETS = {SearchTarget.PROMPTS, SearchTarget.RESPONSES, SearchTarget.TOOLS}
 
 _RESET = "\033[0m"
 _BOLD = "\033[1m"

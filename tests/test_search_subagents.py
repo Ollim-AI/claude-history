@@ -7,7 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from claude_history.agents import search_subagent_files
-from claude_history.cli import prefilter_files
+from claude_history.models import SearchTarget
+from claude_history.search import prefilter_files
+
+# Default targets for tests that need to search all content
+_ALL_CONTENT = {SearchTarget.PROMPTS, SearchTarget.RESPONSES, SearchTarget.TOOLS}
 
 
 def _write_subagent_file(path: Path, records: list[dict]) -> None:
@@ -47,7 +51,7 @@ class TestSearchSubagentFiles:
     def test_finds_match_in_prompt(self, tmp_path: Path) -> None:
         f = tmp_path / "agent-abc.jsonl"
         _write_subagent_file(f, _make_subagent_records("find this keyword"))
-        matches = search_subagent_files([f], "keyword", case_sensitive=False)
+        matches = search_subagent_files([f], "keyword", case_sensitive=False, targets=_ALL_CONTENT)
         assert len(matches) == 1
         assert matches[0].uuid == "abc"
         assert matches[0].type == "subagent"
@@ -55,26 +59,26 @@ class TestSearchSubagentFiles:
     def test_finds_match_in_response(self, tmp_path: Path) -> None:
         f = tmp_path / "agent-def.jsonl"
         _write_subagent_file(f, _make_subagent_records("something"))
-        matches = search_subagent_files([f], "response about", case_sensitive=False)
+        matches = search_subagent_files([f], "response about", case_sensitive=False, targets=_ALL_CONTENT)
         assert len(matches) == 1
 
     def test_no_match(self, tmp_path: Path) -> None:
         f = tmp_path / "agent-ghi.jsonl"
         _write_subagent_file(f, _make_subagent_records("nothing here"))
-        matches = search_subagent_files([f], "nonexistent", case_sensitive=False)
+        matches = search_subagent_files([f], "nonexistent", case_sensitive=False, targets=_ALL_CONTENT)
         assert len(matches) == 0
 
     def test_case_insensitive(self, tmp_path: Path) -> None:
         f = tmp_path / "agent-x.jsonl"
         _write_subagent_file(f, _make_subagent_records("Hello World"))
-        matches = search_subagent_files([f], "hello world", case_sensitive=False)
+        matches = search_subagent_files([f], "hello world", case_sensitive=False, targets=_ALL_CONTENT)
         assert len(matches) == 1
 
     def test_case_sensitive(self, tmp_path: Path) -> None:
         f = tmp_path / "agent-x.jsonl"
         _write_subagent_file(f, _make_subagent_records("Hello World"))
-        assert search_subagent_files([f], "hello world", case_sensitive=True) == []
-        assert len(search_subagent_files([f], "Hello World", case_sensitive=True)) == 1
+        assert search_subagent_files([f], "hello world", case_sensitive=True, targets=_ALL_CONTENT) == []
+        assert len(search_subagent_files([f], "Hello World", case_sensitive=True, targets=_ALL_CONTENT)) == 1
 
     def test_stores_snippet_not_full_text(self, tmp_path: Path) -> None:
         """Match text should be the individual record's text, not all records concatenated."""
@@ -93,7 +97,7 @@ class TestSearchSubagentFiles:
             })
         f = tmp_path / "agent-big.jsonl"
         _write_subagent_file(f, records)
-        matches = search_subagent_files([f], "prompt text", case_sensitive=False)
+        matches = search_subagent_files([f], "prompt text", case_sensitive=False, targets=_ALL_CONTENT)
         assert len(matches) == 1
         # Match text should be just the matching record, not 100 * 10KB concatenated
         assert len(matches[0].text) < 1000
@@ -103,7 +107,7 @@ class TestSearchSubagentFiles:
         _write_subagent_file(
             f, _make_subagent_records("query", session_id="sess-42", timestamp="2026-03-15T08:00:00Z")
         )
-        matches = search_subagent_files([f], "query", case_sensitive=False)
+        matches = search_subagent_files([f], "query", case_sensitive=False, targets=_ALL_CONTENT)
         assert matches[0].session_id == "sess-42"
         assert matches[0].timestamp == datetime(2026, 3, 15, 8, 0, tzinfo=timezone.utc)
 
@@ -114,7 +118,7 @@ class TestSearchSubagentFiles:
         _write_subagent_file(f1, _make_subagent_records("match here"))
         _write_subagent_file(f2, _make_subagent_records("no match"))
         _write_subagent_file(f3, _make_subagent_records("match here too"))
-        matches = search_subagent_files([f1, f2, f3], "match here", case_sensitive=False)
+        matches = search_subagent_files([f1, f2, f3], "match here", case_sensitive=False, targets=_ALL_CONTENT)
         assert len(matches) == 2
 
 
