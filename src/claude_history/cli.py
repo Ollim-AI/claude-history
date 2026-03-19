@@ -827,10 +827,10 @@ def cmd_search(args: argparse.Namespace) -> None:
         print(f"  {snippet}")
         print()
 
-    # Next-action hint
+    # Next-action hint for last match
     if matches:
-        first = matches[0]
-        hint = f"transcript {first.uuid[:8]}" if first.type == "subagent" else f"response {first.uuid[:8]}"
+        last = matches[-1]
+        hint = f"transcript {last.uuid[:8]}" if last.type == "subagent" else f"response {last.uuid[:8]}"
         print(dim(f"  > {hint}"))
 
 
