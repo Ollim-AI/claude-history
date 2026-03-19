@@ -57,6 +57,7 @@ from claude_history.render import (
     format_tokens,
     green,
     render_blocks,
+    truncate_text,
     yellow,
 )
 from claude_history.search import highlight_match, prefilter_files, search_records
@@ -722,7 +723,7 @@ def cmd_search(args: argparse.Namespace) -> None:
             else ""
         )
         match_type = type_labels.get(match.type, dim("[response]"))
-        snippet = highlight_match(match.text, query)
+        snippet = highlight_match(match.text, query, case_sensitive=case_sensitive)
         print(f"{uuid_short} | {ts} | {match_type}")
         print(f"  {snippet}")
         print()

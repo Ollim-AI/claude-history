@@ -194,7 +194,7 @@ def render_blocks(
                     print(yellow("[hook context]"))
                     print(yellow(ctx))
                     print()
-            cleaned = strip_system_tags(content) if show_hooks else content.strip()
+            cleaned = strip_system_tags(content)
             if show_thinking:
                 print(cyan("[text]"))
             if cleaned:

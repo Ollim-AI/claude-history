@@ -79,10 +79,13 @@ def prefilter_files(
         return [f for f in pool.map(_check_file, jsonl_files) if f is not None]
 
 
-def highlight_match(text: str, query: str, context_chars: int = 60) -> str:
+def highlight_match(text: str, query: str, context_chars: int = 60, case_sensitive: bool = False) -> str:
     """Show a snippet around the first match with the query highlighted."""
     text_flat = text.replace("\n", " ").strip()
-    idx = text_flat.lower().find(query.lower())
+    if case_sensitive:
+        idx = text_flat.find(query)
+    else:
+        idx = text_flat.lower().find(query.lower())
     if idx == -1:
         return truncate_text(text_flat, context_chars * 2)
     start = max(0, idx - context_chars)
