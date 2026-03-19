@@ -8,6 +8,15 @@ Primary consumers are LLM agents; human use is secondary. Design for three agent
 - **Legibility**: Command structure, flag names, and error messages must be self-evident from `--help` alone. Output and errors should be actionable without requiring prior context — an agent seeing a message for the first time must know what to do next.
 - **Token economy**: Default output is minimal and progressive — summary first, detail on request. No decorative formatting, no redundant headers, no verbose confirmation messages. Subagent encapsulation keeps context windows small. Performance matters because agents pay for wall-clock time in context and latency.
 
+## Implementation
+
+Before committing, every change goes through these gates:
+
+1. **One logical change per commit** — split unrelated changes into separate commits.
+2. **Review for complexity** (`/simplify`) — run on all code changes. Skip for docs-only or config-only changes.
+3. **Review CLI-facing text** (`/improve-prompt`) — run when a commit adds or modifies error messages, help text, or output formatting, because agents treat CLI output as instructions for what to do next. Skip when changes don't alter user/agent-visible text.
+4. **Add behavior tests** — for any change that adds, removes, or alters CLI behavior. Skip for internal refactors with existing test coverage.
+
 ## Codebase notes
 
 - `models.py` — Leaf module with zero internal imports; all other modules depend on it. ANSI codes are module-level constants shared via re-export.
