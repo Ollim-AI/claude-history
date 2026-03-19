@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from claude_history.cli import encode_path, highlight_match, parse_since, resolve_session_ref, resolve_slug
+from claude_history.cli import highlight_match, parse_since
+from claude_history.resolve import encode_path, resolve_session_ref, resolve_slug
 
 
 class TestParseSince:
