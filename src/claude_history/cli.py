@@ -733,17 +733,7 @@ def cmd_search(args: argparse.Namespace) -> None:
 
 
 
-def _set_memory_limit(max_gb: float = 4.0) -> None:
-    try:
-        import resource
-        limit = int(max_gb * 1024**3)
-        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-    except (ImportError, ValueError, OSError):
-        pass
-
-
 def main() -> None:
-    _set_memory_limit()
     parser = argparse.ArgumentParser(
         description="Claude Code Project History Navigator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
