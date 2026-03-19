@@ -152,7 +152,9 @@ def cmd_response(args: argparse.Namespace) -> None:
         and r.get("uuid", "").startswith(target_uuid)
     ]
     if not matching:
-        print(f"Error: No user prompt found with UUID starting with '{target_uuid}'")
+        proj = project_dir.name
+        print(f"Error: No user prompt found with UUID starting with '{target_uuid}' in {proj}")
+        print(f"  Hint: Try: claude-history transcript {target_uuid} (session or subagent)")
         sys.exit(1)
     user_record = matching[0]
 
@@ -217,7 +219,9 @@ def cmd_subagents(args: argparse.Namespace) -> None:
         # Match by agent_id prefix
         matches = [a for a in subagents if a.agent_id.startswith(agent_id)]
         if not matches:
-            print(f"Error: No subagent found with ID starting with '{agent_id}'")
+            proj = project_dir.name
+            print(f"Error: No subagent found with ID starting with '{agent_id}' in {proj}")
+            print("  Hint: This ID may belong to a different project. Try: --cwd <path>")
             sys.exit(1)
         agent = matches[0]
 
@@ -342,7 +346,12 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     # Find matching session
     matching_sessions = [s for s in sessions if s.session_id.startswith(session_prefix)]
     if not matching_sessions:
-        print(f"Error: No session found with ID starting with '{session_prefix}'")
+        proj = project_dir.name
+        print(f"Error: No session found with ID starting with '{session_prefix}' in {proj}")
+        if find_subagent_file(project_dir, session_prefix):
+            print(f"  Hint: This is a subagent ID. Try: claude-history transcript {session_prefix}")
+        else:
+            print("  Hint: This ID may belong to a different project. Try: --cwd <path>")
         sys.exit(1)
 
     session = matching_sessions[0]
