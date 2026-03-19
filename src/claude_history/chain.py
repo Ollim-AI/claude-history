@@ -357,7 +357,7 @@ def extract_hook_text(chain: list[dict], records: list[Record]) -> str:
                         tool_use_ids.add(tool_id)
 
     if tool_use_ids:
-        tool_results = _collect_tool_results(records, tool_use_ids)
+        tool_results = collect_tool_results(records, tool_use_ids)
         for tr in tool_results.values():
             if tr.is_error and isinstance(tr.content, str) and HOOK_ERROR_RE.search(tr.content):
                 parts.append(tr.content)
@@ -365,7 +365,7 @@ def extract_hook_text(chain: list[dict], records: list[Record]) -> str:
     return " ".join(parts)
 
 
-def _collect_tool_results(
+def collect_tool_results(
     records: list[Record], tool_use_ids: Collection[str]
 ) -> dict[str, ToolResultContent]:
     """Collect tool results from user records that match given tool_use IDs."""
@@ -530,7 +530,7 @@ def extract_ordered_content(
 
     # If requested, find tool results and insert after their tool_use
     if include_tool_results and records and tool_use_ids:
-        tool_results = _collect_tool_results(records, tool_use_ids.keys())
+        tool_results = collect_tool_results(records, tool_use_ids.keys())
 
         # Insert tool results after their corresponding tool_use (in reverse order to maintain indices)
         inserts: list[tuple[int, ContentBlock]] = []

@@ -11,6 +11,7 @@ from claude_history.models import (
     DT_MIN,
     STOP_HOOK_FEEDBACK_PREFIX,
     SearchMatch,
+    SearchTarget,
     SubagentMetadata,
     ToolInfo,
     extract_content_text,
@@ -173,9 +174,12 @@ def get_subagents(project_dir: Path) -> list[SubagentMetadata]:
 
 
 def search_subagent_files(
-    files: list[Path], query: str, case_sensitive: bool
+    files: list[Path],
+    query: str,
+    case_sensitive: bool,
+    targets: set[SearchTarget] | None = None,
 ) -> list[SearchMatch]:
-    """Search subagent files for matching text in prompts and assistant responses.
+    """Search subagent files for matching text in the specified targets.
 
     Searches record-by-record and stores only a snippet around the match
     to avoid unbounded memory from concatenating all text.
@@ -183,6 +187,13 @@ def search_subagent_files(
     compare = (lambda t: t) if case_sensitive else (lambda t: t.lower())
     q = compare(query)
     matches: list[SearchMatch] = []
+    # Which record roles to search
+    search_user = targets is None or bool(
+        targets & {SearchTarget.PROMPTS, SearchTarget.TOOL_RESULTS}
+    )
+    search_assistant = targets is None or bool(
+        targets & {SearchTarget.RESPONSES, SearchTarget.TOOLS, SearchTarget.THINKING, SearchTarget.HOOKS}
+    )
 
     for filepath in files:
         records = parse_subagent_file(filepath)
@@ -197,14 +208,18 @@ def search_subagent_files(
             if matched_text:
                 break
 
-            # Extract text from this record only
-            text = ""
-            if r.get("type") in ("user", "assistant"):
-                content = r.get("message", {}).get("content", "")
-                text = content if isinstance(content, str) else extract_content_text(content)
+            rtype = r.get("type")
+            content = r.get("message", {}).get("content", "")
 
-            if text and q in compare(text):
-                matched_text = text
+            if rtype == "user" and search_user:
+                text = content if isinstance(content, str) else extract_content_text(content)
+                if text and q in compare(text):
+                    matched_text = text
+
+            elif rtype == "assistant" and search_assistant:
+                text = content if isinstance(content, str) else extract_content_text(content)
+                if text and q in compare(text):
+                    matched_text = text
 
         if matched_text:
             matches.append(

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,9 +17,6 @@ from claude_history.resolve import resolve_project_dir, resolve_session_ref
 from claude_history.chain import (
     build_notification_map,
     build_task_agent_map,
-    extract_all_text,
-    extract_all_tools,
-    extract_hook_text,
     extract_ordered_content,
     extract_user_prompts,
     get_full_response,
@@ -32,16 +28,18 @@ from claude_history.io import (
     parse_jsonl_file,
 )
 from claude_history.models import (
+    ALL_SEARCH_TARGETS,
     _CYAN,
     _RESET,
     _TEAMMATE_COLORS,
     _YELLOW,
     CLAUDE_PROJECTS_DIR,
+    DEFAULT_SEARCH_TARGETS,
     DT_MIN,
     PAGE_SIZE,
     ProgressStub,
     Record,
-    SearchMatch,
+    SearchTarget,
     TeammateMessage,
     ToolUseContent,
     iter_user_records,
@@ -57,12 +55,11 @@ from claude_history.render import (
     format_local,
     format_time,
     format_tokens,
-    format_tool_summary,
     green,
     render_blocks,
-    truncate_text,
     yellow,
 )
+from claude_history.search import highlight_match, prefilter_files, search_records
 from claude_history.sessions import get_compactions, get_sessions, get_sessions_from_dir
 
 
@@ -615,153 +612,43 @@ def cmd_sessions(args: argparse.Namespace) -> None:
         print(dim(f"  > transcript {first_id}"))
 
 
-def prefilter_files(
-    project_dir: Path,
-    query: str,
-    case_sensitive: bool = False,
-    since_dt: datetime | None = None,
-) -> list[Path]:
-    """Use grep to find JSONL files containing the query in non-progress records.
-
-    Pipes grep -v to exclude progress records (which contain embedded conversation
-    text from subagent context and cause false positives), then checks for the query.
-
-    Args:
-        since_dt: If provided, skip files whose mtime is before this datetime.
-            Applied before grep to avoid spawning subprocesses for old files.
-    """
-    jsonl_files = list(project_dir.glob("*.jsonl"))
-    jsonl_files.extend(project_dir.glob("*/subagents/agent-*.jsonl"))
-    if since_dt:
-        cutoff = since_dt.timestamp()
-        jsonl_files = [f for f in jsonl_files if f.stat().st_mtime >= cutoff]
-    if not jsonl_files:
-        return []
-    matching = []
-    case_flag = [] if case_sensitive else ["-i"]
-    for f in jsonl_files:
-        try:
-            # Filter out progress records, then search for query
-            # Use -f - to pipe pattern via stdin (avoids Windows quoting issues)
-            p1 = subprocess.Popen(
-                ["grep", "-F", "-v", "-f", "-", str(f)],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-            )
-            try:
-                p1.stdin.write(b'"type":"progress"\n')
-                p1.stdin.close()
-                p2 = subprocess.Popen(
-                    ["grep", "-F", "-q", *case_flag, "--", query],
-                    stdin=p1.stdout,
-                    stdout=subprocess.PIPE,
-                )
-                p1.stdout.close()
-                p2.communicate()
-                if p2.returncode == 0:
-                    matching.append(f)
-            finally:
-                p1.wait()
-        except (OSError, subprocess.SubprocessError):
-            # SubprocessError catches TimeoutExpired from communicate()
-            matching.append(f)  # Fallback: include file if grep fails
-    return matching
 
 
-def highlight_match(text: str, query: str, context_chars: int = 60) -> str:
-    """Show a snippet around the first match with the query highlighted."""
-    text_flat = text.replace("\n", " ").strip()
-    idx = text_flat.lower().find(query.lower())
-    if idx == -1:
-        return truncate_text(text_flat, context_chars * 2)
-    start = max(0, idx - context_chars)
-    end = min(len(text_flat), idx + len(query) + context_chars)
-    snippet = ""
-    if start > 0:
-        snippet += "..."
-    snippet += text_flat[start:idx]
-    snippet += _YELLOW + text_flat[idx : idx + len(query)] + _RESET
-    snippet += text_flat[idx + len(query) : end]
-    if end < len(text_flat):
-        snippet += "..."
-    return snippet
+def _parse_targets(args: argparse.Namespace) -> set[SearchTarget]:
+    """Resolve --target, -p, -r flags into a set of SearchTarget values."""
+    if args.target and (args.prompts_only or args.responses_only):
+        print("Error: --target cannot be combined with -p/--prompts-only or -r/--responses-only")
+        sys.exit(1)
 
+    if args.target:
+        raw = [t.strip() for t in args.target.split(",") if t.strip()]
+        if not raw:
+            valid = ", ".join(sorted(ALL_SEARCH_TARGETS))
+            print(f"Error: --target requires at least one value. Valid targets: {valid}")
+            sys.exit(1)
+        targets: set[SearchTarget] = set()
+        for name in raw:
+            if name not in ALL_SEARCH_TARGETS:
+                valid = ", ".join(sorted(ALL_SEARCH_TARGETS))
+                print(f'Unknown target "{name}". Valid targets: {valid}')
+                sys.exit(1)
+            targets.add(SearchTarget(name))
+        return targets
 
-def search_records(
-    records: list[Record],
-    query: str,
-    case_sensitive: bool,
-    search_prompts: bool,
-    search_responses: bool,
-) -> list[SearchMatch]:
-    """Search through records for matching text in prompts and/or responses."""
-    matches: list[SearchMatch] = []
-    compare = (lambda t: t) if case_sensitive else (lambda t: t.lower())
-    q = compare(query)
-    seen: set[str] = set()
-
-    prompts = extract_user_prompts(records)
-    # Filter to user-typed prompts only
-    prompts = [p for p in prompts if p.is_user_prompt]
-
-    for prompt in prompts:
-        prompt_text = prompt.text
-        uuid = prompt.uuid
-
-        # Search prompt text
-        if search_prompts and q in compare(prompt_text):
-            if uuid not in seen:
-                seen.add(uuid)
-                matches.append(
-                    SearchMatch(
-                        type="prompt",
-                        uuid=uuid,
-                        session_id=prompt.session_id,
-                        timestamp=prompt.timestamp,
-                        text=prompt_text,
-                    )
-                )
-
-        # Search response text + tool calls
-        if search_responses:
-            chain = get_full_response(records, uuid)
-            response_text = extract_all_text(chain)
-            tools = extract_all_tools(chain)
-            tool_text = " ".join(
-                f"{t['name']} {format_tool_summary(t['name'], t['input'])}"
-                for t in tools
-            )
-            hook_text = extract_hook_text(chain, records)
-            full_text = f"{response_text} {tool_text} {hook_text}".strip()
-            if full_text and q in compare(full_text):
-                if ("r:" + uuid) not in seen:
-                    seen.add("r:" + uuid)
-                    matches.append(
-                        SearchMatch(
-                            type="response",
-                            uuid=uuid,
-                            session_id=prompt.session_id,
-                            timestamp=prompt.timestamp,
-                            text=full_text,
-                        )
-                    )
-
-    matches.sort(key=lambda m: m.timestamp or DT_MIN, reverse=True)
-    return matches
+    if args.prompts_only:
+        return {SearchTarget.PROMPTS}
+    if args.responses_only:
+        return {SearchTarget.RESPONSES, SearchTarget.TOOLS, SearchTarget.HOOKS}
+    return DEFAULT_SEARCH_TARGETS
 
 
 def cmd_search(args: argparse.Namespace) -> None:
-    """Handle the 'search' command.
-
-    Searches across all sessions for matching text in prompts and/or responses.
-    Uses grep pre-filtering for performance.
-    """
+    """Handle the 'search' command."""
     project_dir = resolve_project_dir(args)
 
     query = args.query
     case_sensitive = args.case_sensitive
-    search_prompts = not args.responses_only
-    search_responses = not args.prompts_only
+    targets = _parse_targets(args)
 
     # Check for session ID matches (JSONL filename = session UUID)
     compare_q = query if case_sensitive else query.lower()
@@ -780,7 +667,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     subagent_files = [f for f in matching_files if "/subagents/" in str(f)]
     matches = []
     if session_files:
-        need_stubs = search_responses
+        need_stubs = targets != {SearchTarget.PROMPTS}
         records = []
         for f in session_files:
             file_records = parse_jsonl_file(f, include_progress_stubs=need_stubs)
@@ -788,11 +675,12 @@ def cmd_search(args: argparse.Namespace) -> None:
                 if isinstance(r, dict):
                     r["_source_file"] = f.name
             records.extend(file_records)
-        matches = search_records(
-            records, query, case_sensitive, search_prompts, search_responses
+        matches = search_records(records, query, case_sensitive, targets)
+    # Only search subagents when targets go beyond prompts-only
+    if subagent_files and targets != {SearchTarget.PROMPTS}:
+        matches.extend(
+            search_subagent_files(subagent_files, query, case_sensitive, targets)
         )
-    if subagent_files:
-        matches.extend(search_subagent_files(subagent_files, query, case_sensitive))
 
     # Apply --since to parsed record timestamps (mtime was a coarse pre-filter)
     if since_dt:
@@ -813,6 +701,14 @@ def cmd_search(args: argparse.Namespace) -> None:
 
     print(f'Found {yellow(len(matches))} match(es) for "{query}":\n')
 
+    type_labels = {
+        "prompt": green("[prompt]"),
+        "tools": cyan("[tools]"),
+        "tool-results": dim("[tool-result]"),
+        "thinking": dim("[thinking]"),
+        "hooks": yellow("[hooks]"),
+        "subagent": yellow("[subagent]"),
+    }
     for match in matches:
         uuid_short = cyan(match.uuid[:8])
         ts = (
@@ -820,7 +716,6 @@ def cmd_search(args: argparse.Namespace) -> None:
             if match.timestamp
             else ""
         )
-        type_labels = {"prompt": green("[prompt]"), "subagent": yellow("[subagent]")}
         match_type = type_labels.get(match.type, dim("[response]"))
         snippet = highlight_match(match.text, query)
         print(f"{uuid_short} | {ts} | {match_type}")
@@ -966,6 +861,11 @@ def main() -> None:
     # search command
     search_parser = subparsers.add_parser("search", help="Search across all sessions")
     search_parser.add_argument("query", help="Text to search for")
+    search_parser.add_argument(
+        "-T",
+        "--target",
+        help="Content types to search, comma-separated: prompts,responses,tools,tool-results,thinking,hooks",
+    )
     search_parser.add_argument(
         "-p", "--prompts-only", action="store_true", help="Search prompts only (faster)"
     )

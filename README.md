@@ -59,6 +59,7 @@ claude-history <command> [options]
 | `transcript AGENT_ID` | Full subagent transcript (accepts hex agent ID) |
 | `response UUID` | Read Claude's response to a prompt |
 | `search QUERY` | Search for text across all sessions and subagents |
+| `search QUERY -T tools` | Search only tool names and inputs |
 | `search -p QUERY` | Search prompts only (faster) |
 | `subagents` | List subagent threads with model, duration, and errors |
 | `subagents AGENT_ID` | Detail view: prompt, tool timeline, tokens, errors |
@@ -93,6 +94,7 @@ The `transcript` and `response` commands support these flags:
 
 | Option | Description |
 |--------|-------------|
+| `-T`, `--target TARGETS` | Content types to search (comma-separated: `prompts,responses,tools,tool-results,thinking,hooks`) |
 | `--page N` | Page number for sessions listing |
 | `--size N` | Sessions per page (default: 10) |
 | `--since WHEN` | Filter by time (e.g., `3d`, `1w`, `24h`, `today`, `2024-01-15`) |

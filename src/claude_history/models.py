@@ -6,9 +6,25 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Literal, NamedTuple
+
+
+class SearchTarget(Enum):
+    """Content types that can be targeted by the search command."""
+
+    PROMPTS = "prompts"
+    RESPONSES = "responses"
+    TOOLS = "tools"
+    TOOL_RESULTS = "tool-results"
+    THINKING = "thinking"
+    HOOKS = "hooks"
+
+
+ALL_SEARCH_TARGETS = {t.value for t in SearchTarget}
+DEFAULT_SEARCH_TARGETS = {SearchTarget.PROMPTS, SearchTarget.RESPONSES, SearchTarget.TOOLS}
 
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
@@ -155,7 +171,9 @@ class SubagentMetadata:
 
 @dataclass(frozen=True, slots=True)
 class SearchMatch:
-    type: Literal["prompt", "response", "subagent"]
+    type: Literal[
+        "prompt", "response", "tools", "tool-results", "thinking", "hooks", "subagent"
+    ]
     uuid: str
     session_id: str
     timestamp: datetime | None

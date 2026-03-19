@@ -117,7 +117,11 @@ The lead's final context window typically contains the synthesis — merged conc
 | `sessions` | List recent sessions with prompt/context-window counts |
 | `sessions --since 3d` | Filter by time (`3d`, `1w`, `24h`, `today`, `2024-01-15`) |
 | `sessions --page N --size N` | Paginate (default: 10 per page) |
-| `search QUERY` | Search prompts + responses across all sessions and subagents |
+| `search QUERY` | Search prompts + responses + tools across all sessions and subagents |
+| `search QUERY -T tools` | Search tool names and inputs only |
+| `search QUERY -T tool-results` | Search tool output content |
+| `search QUERY -T thinking` | Search thinking blocks |
+| `search QUERY -T responses,tools` | Combine multiple targets (comma-separated) |
 | `search QUERY --since 1w` | Search with time filter |
 | `search -p QUERY` | Search prompts only (faster) |
 
