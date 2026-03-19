@@ -233,6 +233,7 @@ def search_subagent_files(
 def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None:
     """Render a full subagent transcript using the same display logic as session transcripts."""
     from claude_history.chain import (
+        build_record_indexes,
         extract_ordered_content,
         extract_user_prompts,
         get_full_response,
@@ -315,14 +316,15 @@ def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None
     print()
 
     if not prompts_only:
-        chain = get_full_response(records, prompt_uuid)
+        indexes = build_record_indexes(records)
+        chain = get_full_response(records, prompt_uuid, indexes=indexes)
         # Some subagent files have two consecutive user records at the start
         # (spawn prompt + system context). If the first has no assistant child,
         # try the next user record.
         if not chain:
             for r in records:
                 if isinstance(r, dict) and r.get("type") == "user" and r.get("uuid") != prompt_uuid:
-                    chain = get_full_response(records, r["uuid"])
+                    chain = get_full_response(records, r["uuid"], indexes=indexes)
                     if chain:
                         break
         if chain:

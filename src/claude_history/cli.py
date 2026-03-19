@@ -16,6 +16,7 @@ from claude_history.agents import get_subagents, render_subagent_transcript, sea
 from claude_history.resolve import resolve_project_dir, resolve_session_ref
 from claude_history.chain import (
     build_notification_map,
+    build_record_indexes,
     build_task_agent_map,
     extract_ordered_content,
     extract_user_prompts,
@@ -415,6 +416,8 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     if len(windows) > 1:
         print(f"Session: {cyan(session_id[:8])} ({len(windows)} context windows)\n")
 
+    indexes = build_record_indexes(records) if not prompts_only else None
+
     for wi, compaction in windows:
         user_prompts = [
             p
@@ -492,7 +495,7 @@ def cmd_transcript(args: argparse.Namespace) -> None:
             print()
 
             if not prompts_only:
-                chain = get_full_response(records, prompt.uuid)
+                chain = get_full_response(records, prompt.uuid, indexes=indexes)
                 if chain:
                     blocks = extract_ordered_content(chain, records, include_tool_results=True, notification_map=notif_map)
 

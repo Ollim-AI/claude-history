@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from claude_history.chain import (
+    build_record_indexes,
     collect_tool_results,
     extract_all_text,
     extract_all_thinking,
@@ -120,6 +121,7 @@ def search_records(
         SearchTarget.THINKING,
         SearchTarget.HOOKS,
     }
+    indexes = build_record_indexes(records) if need_chain else None
 
     for prompt in prompts:
         prompt_text = prompt.text
@@ -141,7 +143,7 @@ def search_records(
 
         # Search response chain targets
         if need_chain:
-            chain = get_full_response(records, uuid)
+            chain = get_full_response(records, uuid, indexes=indexes)
             _search_chain(
                 chain, records, uuid, prompt, q, compare, targets, seen, matches
             )

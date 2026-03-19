@@ -148,7 +148,39 @@ def _find_progress_sibling(siblings: list[Record], visited: set[str]) -> str | N
     return None
 
 
-def get_full_response(records: list[Record], prompt_uuid: str) -> list[dict]:
+RecordIndexes = tuple[dict[str, list[Record]], dict[str, Record]]
+
+
+def build_record_indexes(records: list[Record]) -> RecordIndexes:
+    """Build children_map and record_map for chain traversal.
+
+    Returns (children_map, record_map) for use with get_full_response.
+    Build once before a loop, pass to each call.
+    """
+    children_map: dict[str, list[Record]] = {}
+    record_map: dict[str, Record] = {}
+    for r in records:
+        if isinstance(r, ProgressStub):
+            uuid = r.uuid
+            if uuid:
+                record_map[uuid] = r
+            if r.parentUuid:
+                children_map.setdefault(r.parentUuid, []).append(r)
+        else:
+            uuid = r.get("uuid")
+            if uuid:
+                record_map[uuid] = r
+            parent = r.get("parentUuid")
+            if parent:
+                children_map.setdefault(parent, []).append(r)
+    return children_map, record_map
+
+
+def get_full_response(
+    records: list[Record],
+    prompt_uuid: str,
+    indexes: RecordIndexes | None = None,
+) -> list[dict]:
     """Get all assistant records in the response chain for a prompt.
 
     The chain includes both assistant and user (tool_result) records.
@@ -170,23 +202,10 @@ def get_full_response(records: list[Record], prompt_uuid: str) -> list[dict]:
     if not first:
         return []
 
-    # Build indexes for efficient chain traversal
-    children_map: dict[str, list[Record]] = {}
-    record_map: dict[str, Record] = {}
-    for r in records:
-        if isinstance(r, ProgressStub):
-            uuid = r.uuid
-            if uuid:
-                record_map[uuid] = r
-            if r.parentUuid:
-                children_map.setdefault(r.parentUuid, []).append(r)
-        else:
-            uuid = r.get("uuid")
-            if uuid:
-                record_map[uuid] = r
-            parent = r.get("parentUuid")
-            if parent:
-                children_map.setdefault(parent, []).append(r)
+    if indexes:
+        children_map, record_map = indexes
+    else:
+        children_map, record_map = build_record_indexes(records)
 
     chain = [first]
     current_uuid = first.get("uuid", "")
