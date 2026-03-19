@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -47,12 +48,10 @@ def prefilter_files(
         jsonl_files = [f for f in jsonl_files if f.stat().st_mtime >= cutoff]
     if not jsonl_files:
         return []
-    matching = []
     case_flag = [] if case_sensitive else ["-i"]
-    for f in jsonl_files:
+
+    def _check_file(f: Path) -> Path | None:
         try:
-            # Filter out progress records, then search for query
-            # Use -f - to pipe pattern via stdin (avoids Windows quoting issues)
             p1 = subprocess.Popen(
                 ["grep", "-F", "-v", "-f", "-", str(f)],
                 stdin=subprocess.PIPE,
@@ -69,13 +68,15 @@ def prefilter_files(
                 p1.stdout.close()
                 p2.communicate()
                 if p2.returncode == 0:
-                    matching.append(f)
+                    return f
             finally:
                 p1.wait()
         except (OSError, subprocess.SubprocessError):
-            # SubprocessError catches TimeoutExpired from communicate()
-            matching.append(f)  # Fallback: include file if grep fails
-    return matching
+            return f  # Fallback: include file if grep fails
+        return None
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        return [f for f in pool.map(_check_file, jsonl_files) if f is not None]
 
 
 def highlight_match(text: str, query: str, context_chars: int = 60) -> str:
