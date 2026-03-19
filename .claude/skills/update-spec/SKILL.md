@@ -7,7 +7,19 @@ allowed-tools: Agent, Bash, Read, Edit, Glob, Grep
 
 # Update Spec
 
-Audit SPEC.md against real JSONL session files by spawning parallel specialist agents, each analyzing one dimension of the format. Merges findings into a gap report. With `--fix`, edits SPEC.md directly.
+Audit SPEC.md against real JSONL session files. Spawns parallel specialists to find format changes, then filters findings by relevance to claude-history before applying.
+
+**Purpose:** SPEC.md exists to support claude-history development — it documents the JSONL format so the parser, chain walker, renderer, and file discovery code can be built and maintained correctly. It is not a comprehensive field catalog. Every section should help someone understand how to parse, traverse, render, or locate session data.
+
+## Relevance filter
+
+Every finding must pass this filter before being added to the spec:
+
+1. **Does claude-history's code read or depend on this?** Grep `src/claude_history/` for the field name, record type, or pattern. If the code uses it, document it.
+2. **Could this break parsing or chain traversal if misunderstood?** New record types that appear in the chain, new content block types that affect rendering, new file patterns that affect discovery — these matter even if the code doesn't handle them yet, because they represent parser gaps.
+3. **Is this just metadata the parser passes through?** Fields like `inference_geo`, `iterations`, `speed` that no parser logic depends on — omit or mention once in a "Known but unused" note, not in detailed sections.
+
+When `--fix` is used, also scan existing spec sections for content that fails this filter and flag it for pruning (don't auto-remove — flag for review).
 
 ## Workflow
 
@@ -95,40 +107,47 @@ Use `jq` for JSON extraction. Performance note: prefer single-pass `jq` over per
 - New `stop_reason` values
 - New user-record content shapes
 
-### 3. Synthesize
+### 3. Filter and synthesize
 
-After all specialists return, merge reports:
+After all specialists return:
 
-1. **Deduplicate** — the same gap found by multiple specialists (common for cross-cutting fields like `forkedFrom`). Keep the most detailed description with sample values from each.
-2. **Prioritize:**
-   - **High**: New record types, new fields on existing types, spec inaccuracies (documented behavior doesn't match data)
-   - **Medium**: New file naming patterns, new subtypes, format changes
-   - **Low**: Version range updates, unverified-item confirmation, cosmetic issues
-3. **Cross-validate** — if a finding appears in only one specialist's report, run a targeted verification query before acting on it. Single-source findings have higher false-positive risk.
+1. **Deduplicate** — the same gap found by multiple specialists. Keep the most detailed description.
+2. **Apply the relevance filter** to each finding:
+   - Grep `src/claude_history/` for the field/type/pattern name
+   - Classify: parser-relevant (document in detail), chain/render-relevant (document), or metadata-only (omit or note briefly)
+   - Drop findings that are pure metadata with no parsing impact
+3. **Prioritize** remaining findings:
+   - **High**: New record types in the chain, spec inaccuracies affecting parsing, new content shapes that break rendering
+   - **Medium**: New file naming patterns, new subtypes the code should handle
+   - **Low**: Version range updates, new models, unverified-item confirmation
+4. **Cross-validate** — if a finding appears in only one specialist's report, verify with a targeted query.
 
 **Adequacy check before proceeding:**
 - At least 3 different project dirs were sampled
-- All 5 specialists returned results (if one timed out, re-run it with smaller files)
-- The version range in data is at least as new as the spec's "Last audited" version — if not, the sample is too old
+- All 5 specialists returned results (if one timed out, re-run with smaller files)
+- The version range in data is at least as new as the spec's "Last audited" version
 
 ### 4. Apply
 
-**Without `--fix`:** Print the merged gap report as a prioritized markdown table and stop.
+**Without `--fix`:** Print the filtered gap report as a prioritized markdown table and stop.
 
-**With `--fix`:** Edit SPEC.md for each confirmed gap:
+**With `--fix`:** Edit SPEC.md for each relevant, confirmed gap:
 
 | Gap type | Where to edit |
 |----------|---------------|
-| New record type | Add subsection under "Additional Record Types" |
-| New field on existing type | Add to that type's section, or Common Optional Fields if cross-cutting |
-| New subtype | Add to Progress or System section |
+| New record type (parser-relevant) | Add subsection under "Additional Record Types" |
+| New field affecting parsing/chain/render | Add to that type's section, or Common Optional Fields if cross-cutting |
+| New subtype the code handles | Add to Progress or System section |
 | New file naming pattern | Add to File Naming table |
 | Version range | Update "Observed client versions" line |
 | Spec inaccuracy | Fix the incorrect text in place |
+| Metadata-only field | Mention once in the relevant record type section as "also present but not used by parsers", or omit |
+
+Also flag existing spec sections that document fields no code path uses — these are pruning candidates. Don't auto-remove; list them at the end of the report for manual review.
 
 After all edits, update the "Last audited" line at the bottom of SPEC.md with today's date and the new version range.
 
-**Before editing:** If SPEC.md has uncommitted changes, warn and confirm before proceeding — edits on top of uncommitted changes are hard to untangle.
+**Before editing:** If SPEC.md has uncommitted changes, warn and confirm before proceeding.
 
 ## When to ask
 
@@ -136,15 +155,18 @@ After all edits, update the "Last audited" line at the bottom of SPEC.md with to
 - `--fix` and SPEC.md has uncommitted changes
 - A gap is ambiguous — could be intentional omission vs. documentation miss
 - All sampled files are from the same project (limited coverage)
+- A finding is borderline relevant — parser doesn't use it now but might need to
 
 **Don't ask when:**
 - Sample selection, specialist count, or jq approach — proceed with defaults
-- Gap is clearly undocumented (new record type, new field with sample values)
+- Gap is clearly parser-relevant (new record type in chain, new content block type)
+- Finding clearly fails the relevance filter (pure metadata)
 
 ## Gotchas
 
 - **jq on large files is slow** — 15MB files take minutes per `select()` pass. Use files under 5MB, or `head -5000` for larger ones, because the audit needs breadth across projects more than depth in one file.
 - **Don't hardcode known types in exclusion lists** — read the spec to determine what's documented, then compare. Hardcoded lists become stale the moment the spec is updated.
-- **`--fix` must not invent** — only document what was observed with sample values. State what was seen, not what it might mean. Semantics require a second verification pass.
+- **`--fix` must not invent** — only document what was observed with sample values. State what was seen, not what it might mean.
 - **Unverified items are not gaps** — if the spec documents something not found in data, don't remove it. Mark "still unverified" with the audit date.
 - **Subagent files have different patterns** — they lack progress records, are fully parsed (small), and may contain fields absent from main session files. Always include them in the sample.
+- **The spec serves the parser, not completeness** — a field that exists in every record but no code path reads is less important than a rare field that the chain walker must handle correctly. Prioritize accordingly.
