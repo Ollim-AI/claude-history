@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
 
-from claude_history.chain import extract_user_prompts
+from claude_history.chain import extract_user_prompts, is_user_text_prompt
 from claude_history.io import parse_jsonl_file
 from claude_history.models import (
     DT_MIN,
@@ -175,28 +175,19 @@ def _accumulate_session_record(sess: Session, record: dict) -> None:
         if dt:
             sess.implicit_boundaries.add(dt)
 
-    # Count prompts with text content
+    if not is_user_text_prompt(record):
+        return
     prompt_text = extract_content_text(record.get("message", {}).get("content", []))
     if not prompt_text:
         return
-
-    # Teammate-message records lack isMeta and sourceToolAssistantUUID but
-    # are not user-typed prompts (same check as chain.py:59, chain.py:124).
-    is_text_prompt = (
-        not record.get("isMeta")
-        and "sourceToolAssistantUUID" not in record
-        and not (isinstance(content, str) and content.startswith("<teammate-message"))
-    )
-    if is_text_prompt:
-        sess.prompt_count += 1
+    sess.prompt_count += 1
 
     dt = parse_timestamp(record.get("timestamp"))
     if dt:
         if sess.latest_timestamp is None or dt > sess.latest_timestamp:
             sess.latest_timestamp = dt
-        if is_text_prompt:
-            if sess.first_prompt is None or dt < sess.first_prompt[0]:
-                sess.first_prompt = (dt, prompt_text)
+        if sess.first_prompt is None or dt < sess.first_prompt[0]:
+            sess.first_prompt = (dt, prompt_text)
 
 
 def _accumulate_records(
