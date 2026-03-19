@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from claude_history.agents import get_subagents, render_subagent_transcript, search_subagent_files
@@ -73,7 +73,7 @@ def parse_since(value: str) -> datetime:
     if value == "today":
         return now.replace(hour=0, minute=0, second=0, microsecond=0)
     if value == "yesterday":
-        return (now - __import__("datetime").timedelta(days=1)).replace(
+        return (now - timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
     # Relative shorthand: Nm, Nh, Nd, Nw
@@ -81,8 +81,6 @@ def parse_since(value: str) -> datetime:
     if m:
         n = int(m.group(1))
         unit = m.group(2)
-        from datetime import timedelta
-
         deltas = {
             "m": timedelta(minutes=n),
             "h": timedelta(hours=n),
