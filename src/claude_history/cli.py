@@ -13,7 +13,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from claude_history.agents import get_subagents, render_subagent_transcript, search_subagent_files
-from claude_history.resolve import resolve_project_dir, resolve_session_ref
+from claude_history.resolve import (
+    find_prompt_across_projects,
+    find_session_across_projects,
+    find_subagent_across_projects,
+    note_cross_project,
+    resolve_project_dir,
+    resolve_session_ref,
+)
 from claude_history.chain import (
     build_notification_map,
     build_record_indexes,
@@ -102,6 +109,41 @@ def parse_since(value: str) -> datetime:
 # Command handlers
 
 
+def _find_prompt_records(
+    project_dir: Path, target_uuid: str
+) -> tuple[list, dict | None]:
+    """Two-pass load: find prompt UUID across files, reload with progress stubs.
+
+    Returns (records_with_stubs, user_record) or (records, None) if not found.
+    """
+    records = get_all_conversations(project_dir, include_progress_stubs=False)
+    user_record = None
+    source_file = None
+    for r in records:
+        if isinstance(r, ProgressStub):
+            continue
+        if r.get("type") == "user" and r.get("uuid", "").startswith(target_uuid):
+            user_record = r
+            source_file = r.get("_source_file")
+            break
+
+    if user_record and source_file:
+        filepath = project_dir / source_file
+        records = parse_jsonl_file(filepath, include_progress_stubs=True)
+        for r in records:
+            if isinstance(r, dict):
+                r["_source_file"] = source_file
+
+    matching = [
+        r
+        for r in records
+        if not isinstance(r, ProgressStub)
+        and r.get("type") == "user"
+        and r.get("uuid", "").startswith(target_uuid)
+    ]
+    return records, matching[0] if matching else None
+
+
 def cmd_response(args: argparse.Namespace) -> None:
     """Handle the 'response' command with verbosity levels.
 
@@ -118,41 +160,17 @@ def cmd_response(args: argparse.Namespace) -> None:
     show_tool_results = args.show_tool_results
     show_hooks = args.show_hooks
 
-    # Fast UUID lookup: load non-progress records from all files (small data),
-    # find which file has the UUID, then reload that file with progress stubs.
-    records = get_all_conversations(project_dir, include_progress_stubs=False)
-    user_record = None
-    source_file = None
-    for r in records:
-        if isinstance(r, ProgressStub):
-            continue
-        if r.get("type") == "user" and r.get("uuid", "").startswith(target_uuid):
-            user_record = r
-            source_file = r.get("_source_file")
-            break
-
-    if user_record and source_file:
-        # Reload just that file with progress stubs for chain traversal
-        filepath = project_dir / source_file
-        records = parse_jsonl_file(filepath, include_progress_stubs=True)
-        for r in records:
-            if isinstance(r, dict):
-                r["_source_file"] = source_file
-
-    # Find matching user record (re-search after reload)
-    matching = [
-        r
-        for r in records
-        if not isinstance(r, ProgressStub)
-        and r.get("type") == "user"
-        and r.get("uuid", "").startswith(target_uuid)
-    ]
-    if not matching:
-        proj = project_dir.name
-        print(f"Error: No user prompt found with UUID starting with '{target_uuid}' in {proj}")
+    records, user_record = _find_prompt_records(project_dir, target_uuid)
+    if not user_record:
+        alt_project = find_prompt_across_projects(target_uuid, exclude_dir=project_dir)
+        if alt_project:
+            note_cross_project(alt_project)
+            project_dir = alt_project
+            records, user_record = _find_prompt_records(project_dir, target_uuid)
+    if not user_record:
+        print(f"Error: No user prompt found with UUID starting with '{target_uuid}' in any project")
         print(f"  Hint: Try: claude-history transcript {target_uuid} (session or subagent)")
         sys.exit(1)
-    user_record = matching[0]
 
     # Get full response chain
     chain = get_full_response(records, user_record["uuid"])
@@ -215,9 +233,14 @@ def cmd_subagents(args: argparse.Namespace) -> None:
         # Match by agent_id prefix
         matches = [a for a in subagents if a.agent_id.startswith(agent_id)]
         if not matches:
-            proj = project_dir.name
-            print(f"Error: No subagent found with ID starting with '{agent_id}' in {proj}")
-            print("  Hint: This ID may belong to a different project. Try: --cwd <path>")
+            found = find_subagent_across_projects(agent_id, exclude_dir=project_dir)
+            if found:
+                note_cross_project(found[0])
+                project_dir = found[0]
+                subagents = get_subagents(project_dir)
+                matches = [a for a in subagents if a.agent_id.startswith(agent_id)]
+        if not matches:
+            print(f"Error: No subagent found with ID starting with '{agent_id}' in any project")
             sys.exit(1)
         agent = matches[0]
 
@@ -316,6 +339,11 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     raw_id = args.identifier.split(":")[0]
     if re.fullmatch(r'[0-9a-f]+', raw_id) and not raw_id.startswith("prev"):
         agent_file = find_subagent_file(project_dir, raw_id)
+        if not agent_file:
+            found = find_subagent_across_projects(raw_id, exclude_dir=project_dir)
+            if found:
+                project_dir, agent_file = found
+                note_cross_project(project_dir)
         if agent_file:
             render_subagent_transcript(agent_file, args)
             return
@@ -342,12 +370,27 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     # Find matching session
     matching_sessions = [s for s in sessions if s.session_id.startswith(session_prefix)]
     if not matching_sessions:
-        proj = project_dir.name
-        print(f"Error: No session found with ID starting with '{session_prefix}' in {proj}")
+        # Try cross-project fallback
+        alt_project = find_session_across_projects(session_prefix, exclude_dir=project_dir)
+        if alt_project:
+            note_cross_project(alt_project)
+            project_dir = alt_project
+            records = get_session_conversations(
+                project_dir, session_prefix, include_progress_stubs=not prompts_only
+            )
+            if records is None:
+                records = get_all_conversations(
+                    project_dir, include_progress_stubs=not prompts_only
+                )
+            sessions = get_sessions(records)
+            matching_sessions = [s for s in sessions if s.session_id.startswith(session_prefix)]
+
+    if not matching_sessions:
         if find_subagent_file(project_dir, session_prefix):
-            print(f"  Hint: This is a subagent ID. Try: claude-history transcript {session_prefix}")
+            print(f"Error: '{session_prefix}' is a subagent ID, not a session")
+            print(f"  Try: claude-history transcript {session_prefix}")
         else:
-            print("  Hint: This ID may belong to a different project. Try: --cwd <path>")
+            print(f"Error: No session found with ID starting with '{session_prefix}' in any project")
         sys.exit(1)
 
     session = matching_sessions[0]

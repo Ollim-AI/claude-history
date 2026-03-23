@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 
 from claude_history.cli import highlight_match, parse_since
-from claude_history.resolve import encode_path, resolve_session_ref, resolve_slug
+from claude_history.resolve import (
+    encode_path,
+    find_session_across_projects,
+    find_subagent_across_projects,
+    find_prompt_across_projects,
+    resolve_session_ref,
+    resolve_slug,
+)
 
 
 class TestParseSince:
@@ -209,4 +216,125 @@ class TestResolveSlug:
 
     def test_empty_dir(self, tmp_path: Path) -> None:
         result = resolve_slug("any-slug", tmp_path)
+        assert result is None
+
+
+class TestFindSessionAcrossProjects:
+    def _setup_projects(self, tmp_path: Path) -> Path:
+        """Create a mock CLAUDE_PROJECTS_DIR with multiple project dirs."""
+        projects = tmp_path / "projects"
+        projects.mkdir()
+
+        # Project A has session "aaaa1111..."
+        proj_a = projects / "-home-user-project-a"
+        proj_a.mkdir()
+        (proj_a / "aaaa1111-0000-0000-0000-000000000000.jsonl").write_text(
+            '{"sessionId":"aaaa1111-0000-0000-0000-000000000000","type":"user"}\n'
+        )
+
+        # Project B has session "bbbb2222..."
+        proj_b = projects / "-home-user-project-b"
+        proj_b.mkdir()
+        (proj_b / "bbbb2222-0000-0000-0000-000000000000.jsonl").write_text(
+            '{"sessionId":"bbbb2222-0000-0000-0000-000000000000","type":"user"}\n'
+        )
+
+        return projects
+
+    def test_finds_session_in_other_project(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        projects = self._setup_projects(tmp_path)
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", projects)
+
+        proj_a = projects / "-home-user-project-a"
+        result = find_session_across_projects("bbbb2222", exclude_dir=proj_a)
+        assert result is not None
+        assert result.name == "-home-user-project-b"
+
+    def test_skips_excluded_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        projects = self._setup_projects(tmp_path)
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", projects)
+
+        proj_a = projects / "-home-user-project-a"
+        result = find_session_across_projects("aaaa1111", exclude_dir=proj_a)
+        assert result is None
+
+    def test_returns_none_when_not_found(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        projects = self._setup_projects(tmp_path)
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", projects)
+
+        result = find_session_across_projects("cccc3333")
+        assert result is None
+
+    def test_returns_none_for_nonexistent_projects_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", tmp_path / "nonexistent")
+        result = find_session_across_projects("aaaa")
+        assert result is None
+
+
+class TestFindSubagentAcrossProjects:
+    def test_finds_subagent_in_other_project(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        projects = tmp_path / "projects"
+        projects.mkdir()
+
+        proj_a = projects / "-home-user-project-a"
+        proj_a.mkdir()
+
+        proj_b = projects / "-home-user-project-b"
+        proj_b.mkdir()
+        session_dir = proj_b / "bbbb2222-0000-0000-0000-000000000000"
+        subagents_dir = session_dir / "subagents"
+        subagents_dir.mkdir(parents=True)
+        agent_file = subagents_dir / "agent-abc123def456.jsonl"
+        agent_file.write_text('{"type":"user"}\n')
+
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", projects)
+
+        result = find_subagent_across_projects("abc123", exclude_dir=proj_a)
+        assert result is not None
+        found_dir, found_file = result
+        assert found_dir.name == "-home-user-project-b"
+        assert found_file == agent_file
+
+    def test_returns_none_when_not_found(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        proj = projects / "-home-user-project-a"
+        proj.mkdir()
+
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", projects)
+
+        result = find_subagent_across_projects("nonexistent")
+        assert result is None
+
+
+class TestFindPromptAcrossProjects:
+    def test_finds_prompt_in_other_project(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        projects = tmp_path / "projects"
+        projects.mkdir()
+
+        proj_a = projects / "-home-user-project-a"
+        proj_a.mkdir()
+
+        proj_b = projects / "-home-user-project-b"
+        proj_b.mkdir()
+        (proj_b / "session.jsonl").write_text(
+            '{"type":"user","uuid":"deadbeef-1234-5678-9abc-def012345678"}\n'
+        )
+
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", projects)
+
+        result = find_prompt_across_projects("deadbeef-1234", exclude_dir=proj_a)
+        assert result is not None
+        assert result.name == "-home-user-project-b"
+
+    def test_returns_none_when_not_found(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        proj = projects / "-home-user-project-a"
+        proj.mkdir()
+        (proj / "session.jsonl").write_text('{"type":"user","uuid":"other-uuid"}\n')
+
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", projects)
+
+        result = find_prompt_across_projects("nonexistent-uuid")
         assert result is None

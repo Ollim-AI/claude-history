@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 from claude_history.models import CLAUDE_PROJECTS_DIR
@@ -152,3 +153,74 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
         )
         sys.exit(1)
     return (session_ids[n][:8], ctx_window)
+
+
+def _iter_other_projects(exclude_dir: Path | None = None) -> Iterator[Path]:
+    """Iterate project directories under CLAUDE_PROJECTS_DIR, skipping exclude_dir."""
+    try:
+        dirs = sorted(CLAUDE_PROJECTS_DIR.iterdir())
+    except OSError:
+        return
+    for d in dirs:
+        if d.is_dir() and d != exclude_dir:
+            yield d
+
+
+def find_session_across_projects(
+    session_prefix: str, exclude_dir: Path | None = None
+) -> Path | None:
+    """Search all project dirs for a session file matching the prefix.
+
+    Returns the project_dir containing the match, or None.
+    """
+    for d in _iter_other_projects(exclude_dir):
+        if any(d.glob(f"{session_prefix}*.jsonl")):
+            return d
+    return None
+
+
+def find_subagent_across_projects(
+    agent_id_prefix: str, exclude_dir: Path | None = None
+) -> tuple[Path, Path] | None:
+    """Search all project dirs for a subagent file matching the prefix.
+
+    Returns (project_dir, agent_file_path) or None.
+    """
+    for d in _iter_other_projects(exclude_dir):
+        for path in d.glob("*/subagents/agent-*.jsonl"):
+            if path.stem.replace("agent-", "").startswith(agent_id_prefix):
+                return (d, path)
+    return None
+
+
+def find_prompt_across_projects(
+    prompt_uuid: str, exclude_dir: Path | None = None
+) -> Path | None:
+    """Grep all project dirs for a file containing the prompt UUID.
+
+    Returns project_dir or None.
+    """
+    try:
+        result = subprocess.run(
+            ["grep", "-r", "-l", "-m", "1", "--include=*.jsonl",
+             prompt_uuid, str(CLAUDE_PROJECTS_DIR)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    # Extract project dir from the matching file path
+    match_path = Path(result.stdout.strip().splitlines()[0])
+    # File is under CLAUDE_PROJECTS_DIR/<project>/ — walk up to find project dir
+    for parent in match_path.parents:
+        if parent.parent == CLAUDE_PROJECTS_DIR:
+            if exclude_dir and parent == exclude_dir:
+                return None
+            return parent
+    return None
+
+
+def note_cross_project(project_dir: Path) -> None:
+    """Print a note that a session was found in a different project."""
+    print(f"Note: Found in project {project_dir.name}", file=sys.stderr)
