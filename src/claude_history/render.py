@@ -159,12 +159,14 @@ def render_blocks(
     show_tool_results: bool = True,
     full_detail: bool = False,
     show_hooks: bool = False,
+    detail_hint: str = "",
 ) -> bool:
     """Render content blocks with flag-controlled detail.
 
     Returns True if any content was printed.
     """
     has_output = False
+    hint_printed = False
     prev_type = None
     last_tool_name = ""
     for block in blocks:
@@ -257,6 +259,9 @@ def render_blocks(
                         else:
                             print(dim("\n".join(lines[:20])))
                             print(dim(f"... ({len(lines) - 20} more lines)"))
+                            if detail_hint and not hint_printed:
+                                print(dim(f"  > {detail_hint}"))
+                                hint_printed = True
                 else:
                     print(dim(json.dumps(content.content, indent=2)))
                 print()

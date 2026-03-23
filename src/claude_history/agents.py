@@ -335,6 +335,7 @@ def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None
                 hook_records=hook_records if show_hooks else None,
             )
             print(green("[assistant]"))
+            agent_hint = f"claude-history transcript {agent_id} --show-tool-results" if not full_detail else ""
             if not render_blocks(
                 blocks,
                 {},
@@ -343,6 +344,7 @@ def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None
                 show_tool_results=show_tool_results,
                 full_detail=full_detail,
                 show_hooks=show_hooks,
+                detail_hint=agent_hint,
             ):
                 print(dim("(no text content)"))
                 print()

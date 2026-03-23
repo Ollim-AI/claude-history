@@ -241,12 +241,29 @@ class TestRenderBlocksToolResults:
     def test_long_success_results_truncated(self, capsys) -> None:
         long_text = "\n".join(f"line {i}" for i in range(40))
         blocks = _tool_result_blocks(long_text)
-        render_blocks(blocks, {})
+        render_blocks(blocks, {}, detail_hint="claude-history response abc --show-tool-results")
         out = capsys.readouterr().out
         assert "line 0" in out
         assert "line 19" in out
         assert "line 20" not in out
         assert "20 more lines" in out
+        assert "claude-history response abc --show-tool-results" in out
+
+    def test_hint_printed_once_with_multiple_truncations(self, capsys) -> None:
+        blocks = (
+            _tool_result_blocks("\n".join(f"a{i}" for i in range(30)))
+            + _tool_result_blocks("\n".join(f"b{i}" for i in range(30)))
+        )
+        render_blocks(blocks, {}, detail_hint="claude-history transcript x --show-tool-results")
+        out = capsys.readouterr().out
+        assert out.count("--show-tool-results") == 1
+
+    def test_no_hint_when_full_detail(self, capsys) -> None:
+        long_text = "\n".join(f"line {i}" for i in range(40))
+        blocks = _tool_result_blocks(long_text)
+        render_blocks(blocks, {}, full_detail=True, detail_hint="should not appear")
+        out = capsys.readouterr().out
+        assert "should not appear" not in out
 
     def test_full_detail_disables_truncation(self, capsys) -> None:
         long_text = "\n".join(f"line {i}" for i in range(40))
