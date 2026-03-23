@@ -7,17 +7,13 @@ context: fork
 
 # Claude History
 
-Investigate past Claude Code sessions to understand what work was actually performed. This is a research tool — the goal is always to **read and understand transcript content**, not just list sessions or search for keywords.
-
 Run commands with `claude-history <command>`.
 
 ## Investigation Workflow
 
-Follow this workflow when investigating past sessions. The key insight: **listing sessions and searching are just navigation — reading transcripts is the actual work.**
+Key insight: **listing and searching are navigation — reading transcripts is the actual work.**
 
 ### Step 1: Discover relevant sessions
-
-Start with one of these discovery methods depending on what you know:
 
 | What you know | Command | Purpose |
 |--------------|---------|---------|
@@ -25,35 +21,26 @@ Start with one of these discovery methods depending on what you know:
 | Rough timeframe | `sessions --since 3d` | Filter sessions by time range |
 | "What did we just do?" | `transcript prev --prompts-only` | See user prompts from last session |
 
-**Scoping by time range:** Use `--since` to filter by time. Works on both `sessions` and `search`. Accepts:
+`--since` works on both `sessions` and `search`. Accepts:
 - Relative: `3d` (days), `1w` (weeks), `24h` (hours), `30m` (minutes — not months)
 - Named: `today`, `yesterday`
 - ISO date: `2024-01-15`
 
-Note: `--since` filters from a point forward to now — there's no end-date/range filter. For a narrow historical window, combine with `--size` to keep output manageable.
+`--since` has no end-date filter — for narrow windows, combine with `--size`.
 
-Discovery gives you **session IDs** to investigate. It does not give you understanding — that comes from Step 2.
+Discovery gives you session IDs, not understanding — that comes from Step 2. If nothing matches, broaden: try synonyms, different targets (`-T tools` catches file paths), or wider time ranges.
 
-### Step 2: Read transcripts deeply (this is the core activity)
-
-Once you have a session ID, **read the full transcript** to understand what happened:
+### Step 2: Read full transcripts (the core activity)
 
 ```bash
-# Default shows prompts + responses + tool calls
 claude-history transcript SESSION_ID
-
-# Add --show-thinking to see Claude's reasoning behind decisions
-claude-history transcript SESSION_ID --show-thinking
+claude-history transcript SESSION_ID --show-thinking   # see reasoning
+claude-history transcript SESSION_ID:0 --show-thinking  # specific context window
 ```
 
-For sessions with multiple context windows, read each one:
+`--prompts-only` is useful for orientation, but always read the full transcript.
 
-```bash
-claude-history transcript SESSION_ID:0 --show-thinking
-claude-history transcript SESSION_ID:1 --show-thinking
-```
-
-Use `--prompts-only` for a quick orientation before deep reading. **But always read the full transcript** — prompts show what was *requested*, the transcript body reveals the actual work: file edits, debugging steps, architectural decisions.
+For many matches, read the 3-5 most relevant first (most recent, closest match), then decide if more are needed.
 
 ### Step 3: Follow threads when needed
 
@@ -64,114 +51,55 @@ If a transcript references prior work, follow that thread:
 
 ### Step 4: Synthesize and verify
 
-After reading transcripts, summarize what was actually accomplished — not what was attempted or discussed, but what concrete changes were made.
+Summarize concrete changes made — not what was attempted or discussed.
 
-**Verify the synthesis before presenting:**
-- Every session ID discovered in step 1 has been read and accounted for — list any unread sessions and why they were skipped
-- Concrete changes are anchored to evidence (file paths modified, commands run, commits made) — not just descriptions of intent
-- If the investigation was prompted by a specific question, state whether the question was answered or remains open
+**For multi-session investigations, verify before presenting:**
+- Every discovered session read and accounted for — list unread sessions and why skipped
+- Changes anchored to evidence (file paths, commands, commits) — not descriptions of intent
+- If prompted by a question, state whether it was answered or remains open
 
-## Investigating Team Sessions
+## Anti-patterns
 
-Team sessions involve a lead agent coordinating teammates. Investigation has three layers:
-
-### Layer 1: Coordination (main transcript)
-
-Start with the main session transcript. Team sessions show `[team: name]` in `sessions` output. The transcript renders teammate messages inline with colored `[teammate_id]` labels — these show what each teammate reported back to the lead.
-
-```bash
-claude-history transcript SESSION_ID --hide-tools
-```
-
-Protocol messages (idle notifications, shutdown requests) are hidden by default. Use `--show-system` to reveal them.
-
-### Layer 2: Teammate work (subagent transcripts)
-
-Each teammate runs as a subagent. Use `subagents` to find them — team subagents show `[teammate_name]` labels:
-
-```bash
-claude-history subagents SESSION_ID
-claude-history transcript AGENT_ID   # read a specific teammate's full work
-```
-
-Focus on teammates with longer durations — they did the substantive work. Short-duration subagents are often shutdown acknowledgments.
-
-### Layer 3: Synthesis (last context window)
-
-The lead's final context window typically contains the synthesis — merged conclusions from all teammates. Read it last to see the converged outcome.
-
-## Anti-patterns — DO NOT do these
-
-1. **Listing and stopping.** Running `sessions` and reporting the list is not investigation. Session listings show timestamps and first-prompt previews — they don't tell you what work was done. Always proceed to reading transcripts.
-
-2. **Search-only investigation.** Running `search "keyword"` returns snippets with session IDs. These snippets are breadcrumbs, not answers. You must follow up by reading the full transcript of matching sessions to understand the context around each match.
-
-3. **Reading only prompts.** User prompts show what was *requested*, not what was *done*. The transcript body contains the actual work: files edited, code written, bugs found, decisions made. Always read full transcripts, not just `--prompts-only`.
+1. **Listing and stopping** — `sessions` output is navigation, not investigation. Read transcripts.
+2. **Search-only** — search snippets are breadcrumbs. Read the full transcript of each match.
+3. **Prompts-only** — prompts show requests, not work done. Read full transcripts.
 
 ## Command Reference
 
-### Discovery Commands
+### Search Targets
 
 | Command | Description |
 |---------|-------------|
-| `sessions` | List recent sessions with prompt/context-window counts |
-| `sessions --since 3d` | Filter by time (`3d`, `1w`, `24h`, `today`, `2024-01-15`) |
-| `sessions --page N --size N` | Paginate (default: 10 per page) |
 | `search QUERY -T prompts` | Search user prompts |
 | `search QUERY -T responses` | Search assistant text |
 | `search QUERY -T tools` | Search tool names and inputs |
 | `search QUERY -T tool-results` | Search tool output content |
 | `search QUERY -T thinking` | Search Claude's reasoning |
 | `search QUERY -T hooks` | Search hook errors and context |
-| `search QUERY -T prompts,responses` | Combine targets (comma-separated) |
-| `search QUERY -T tools --since 1w` | Search with time filter |
-| `search -p QUERY` | Shortcut for `-T prompts` (faster) |
+| `search -p QUERY` | Shortcut for `-T prompts` |
 
-### Deep Reading Commands (use these — they're the point)
+### Display Flags
 
-| Command | Description |
-|---------|-------------|
-| `transcript SESSION` | Full conversation: prompts + responses + tool calls + tool results (truncated) |
-| `transcript SESSION:N` | Single context window (0-indexed) |
-| `transcript SESSION --prompts-only` | User prompts only (good for orientation) |
-| `transcript SESSION --show-thinking` | **Recommended**: + thinking blocks |
-| `transcript SESSION --show-tool-results` | Full tool results and inputs (no truncation) |
-| `transcript SESSION --hide-tool-results` | Hide tool result blocks |
-| `transcript SESSION --show-hooks` | Show hook errors and hook context inline |
-| `transcript SESSION --hide-tools` | Text only (no tool calls) |
-| `transcript SESSION --show-system` | + team protocol messages (idle, shutdown) |
-| `transcript AGENT_ID` | Full subagent transcript (accepts hex agent ID) |
+| Flag | Effect |
+|------|--------|
+| `--show-tool-results` | Full tool results and inputs (no truncation) |
+| `--hide-tool-results` | Hide tool result blocks |
+| `--show-hooks` | Show hook errors and hook context inline |
+| `--show-system` | Show team protocol messages (transcript only) |
 
-### Individual Response Commands
+### Other Commands
 
 | Command | Description |
 |---------|-------------|
 | `response UUID` | Claude's response with tool calls + tool results (truncated) |
-| `response UUID --show-thinking` | + thinking blocks |
-| `response UUID --show-tool-results` | Full tool results and inputs (no truncation) |
-| `response UUID --hide-tool-results` | Hide tool result blocks |
-| `response UUID --show-hooks` | Show hook errors and hook context inline |
+| `sessions --page N --size N` | Paginate sessions (default: 10 per page) |
 
-### Subagent Commands
+### Session References
 
-| Command | Description |
-|---------|-------------|
-| `subagents` | List subagent threads (model, duration, errors) |
-| `subagents AGENT_ID` | Detail: prompt, tool timeline, tokens, errors |
-| `subagents --session PREFIX` | Filter subagents by session ID prefix |
-| `subagents --since 1d` | Filter subagents by time |
+- `prev` or `prev-N` — reference recent sessions (1-indexed)
+- Append `:W` for a specific context window: `prev-2:0`
 
-## Session References
-
-Anywhere a SESSION_ID is accepted, you can use `prev` to reference recent sessions:
-
-- `prev` or `prev-1` — previous session
-- `prev-2` — two sessions ago
-- `prev-N` — N sessions ago
-
-Append `:W` for a specific context window: `prev-2:0`
-
-## Targeting Other Projects
+### Targeting Other Projects
 
 - `--cwd PATH` — resolve project from a different directory
 - `--project PATH` — specify project directory directly (under `~/.claude/projects/`)

@@ -40,7 +40,7 @@ Claude Code deletes session history after 30 days by default. To keep older sess
 }
 ```
 
-> **Note:** Heavy Claude Code usage can accumulate significant storage in `~/.claude/projects/`. Adjust the retention period to suit your needs.
+> **Note:** Heavy Claude Code usage can accumulate significant storage in `~/.claude/projects/`.
 
 ## Usage
 
@@ -105,30 +105,18 @@ The `transcript` and `response` commands support these flags:
 ### Example Workflow
 
 ```bash
-# Search across all sessions for a topic
-claude-history search "authentication"
-
-# List recent sessions
-claude-history sessions
-
-# View prompts from the previous session
-claude-history transcript prev --prompts-only
-
-# Full transcript (prompts + responses + tool calls)
+# Full transcript (session IDs are prefix-matched)
 claude-history transcript 9aaedc03
 
-# Drill into a specific context window with thinking
+# Specific context window with thinking
 claude-history transcript 9aaedc03:0 --show-thinking
 
-# Read Claude's response to a specific prompt
-claude-history response 1240dbfc
-
-# Full transcript from 2 sessions ago, text only
+# Two sessions ago, text only
 claude-history transcript prev-2 --hide-tools
 
 # List subagents from a specific session
 claude-history subagents --session 9aaedc03
 
-# Read a subagent's full transcript with thinking
+# Read a subagent's full transcript
 claude-history transcript a63fc3a --show-thinking
 ```
