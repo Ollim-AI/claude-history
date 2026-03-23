@@ -53,7 +53,7 @@ Spawn all 5 as background Agent calls. Each specialist:
 - Extracts data from the sampled files
 - Returns a structured report: gaps found with sample values and priority
 
-**Every specialist prompt must include:** "Research only — do not edit files. Return: item, sample value, priority (high/medium/low), which spec section is affected."
+**Every specialist prompt must include:** "Research only — do not edit files. For each finding, return: item, sample value, priority (high/medium/low), which spec section is affected, and **parser impact** — grep `src/claude_history/` for the code that handles this field/type/pattern and note how the code would behave given the new data. If the code would produce wrong output, silently skip the data, or fail, say so with the function name and line."
 
 Use `jq` for JSON extraction. Performance note: prefer single-pass `jq` over per-type loops — `jq -r 'if .type == "user" then ... elif .type == "assistant" then ... end'` is faster than separate passes.
 
@@ -67,6 +67,8 @@ Use `jq` for JSON extraction. Performance note: prefer single-pass `jq` over per
 - Record types documented in spec but absent from data (mark "unverified")
 
 **Approach:** Extract `type` values, then for each type extract `keys`. Compare both sets against what SPEC.md documents. Don't hardcode which types are "known" — read the spec to determine that.
+
+**Parser impact check:** For new record types, check whether `chain.py` would encounter them during chain traversal (do they have `uuid`/`parentUuid`?) and whether `render.py` would attempt to render them. Note if a new type would be silently skipped or cause a KeyError.
 
 #### Specialist 2: Progress & system subtypes
 
@@ -97,6 +99,11 @@ Use `jq` for JSON extraction. Performance note: prefer single-pass `jq` over per
 - New tool-results naming patterns or file extensions
 - New subdirectory types under UUID dirs
 
+**Parser impact check:** For each new file naming pattern, trace how it flows through the discovery and parsing code. Specifically:
+- `io.py`: `find_subagent_file` uses `path.stem.replace('agent-', '')` to extract agent IDs — would a new prefix produce the correct stem?
+- `agents.py`: `search_subagent_files` globs `agent-*.jsonl` — would new patterns be found or missed?
+- Report any case where a new naming pattern would cause incorrect ID extraction, missed file discovery, or parsing failure.
+
 #### Specialist 5: Content blocks & special fields
 
 **Find:** All `message.content` block types, their field sets, `stop_reason` values, `caller` field values, and string-vs-array content patterns on user records.
@@ -106,6 +113,8 @@ Use `jq` for JSON extraction. Performance note: prefer single-pass `jq` over per
 - New fields on known block types
 - New `stop_reason` values
 - New user-record content shapes
+
+**Parser impact check:** For new content block types, check `render.py:render_blocks` — does it iterate content blocks with type-specific handling (text, thinking, tool_use, tool_result)? A new block type that isn't handled would be silently skipped. For new user-record content shapes, check `chain.py:is_user_typed_prompt` to see if the detection logic would misclassify them.
 
 ### 3. Filter and synthesize
 
@@ -121,6 +130,12 @@ After all specialists return:
    - **Medium**: New file naming patterns, new subtypes the code should handle
    - **Low**: Version range updates, new models, unverified-item confirmation
 4. **Cross-validate** — if a finding appears in only one specialist's report, verify with a targeted query.
+5. **Parser impact sweep** — for each remaining finding, confirm the parser impact was assessed. If a specialist reported a new pattern without tracing it through the code, do it now:
+   - File naming findings → check `io.py:find_subagent_file` and `agents.py:search_subagent_files`
+   - New record types → check `chain.py` traversal and `render.py` display logic
+   - New content block types → check `render.py:render_blocks` iteration
+   - New user-record content shapes → check `chain.py:is_user_typed_prompt`
+   If the code would silently skip, misparse, or fail on the new pattern, that's a high-priority finding even if the specialist rated it lower.
 
 **Adequacy check before proceeding:**
 - At least 3 different project dirs were sampled
