@@ -358,33 +358,21 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     show_system = getattr(args, "show_system", False)
 
     # Prompts-only doesn't need progress stubs (no chain traversal)
-    records = get_session_conversations(
-        project_dir, session_prefix, include_progress_stubs=not prompts_only
-    )
+    include_stubs = not prompts_only
+    records = get_session_conversations(project_dir, session_prefix, include_stubs)
     if records is None:
-        records = get_all_conversations(
-            project_dir, include_progress_stubs=not prompts_only
-        )
-    sessions = get_sessions(records)
-
-    # Find matching session
-    matching_sessions = [s for s in sessions if s.session_id.startswith(session_prefix)]
-    if not matching_sessions:
-        # Try cross-project fallback
+        # Filename IS the session UUID — if glob missed, try other projects before
+        # expensive get_all_conversations fallback.
         alt_project = find_session_across_projects(session_prefix, exclude_dir=project_dir)
         if alt_project:
             note_cross_project(alt_project)
             project_dir = alt_project
-            records = get_session_conversations(
-                project_dir, session_prefix, include_progress_stubs=not prompts_only
-            )
-            if records is None:
-                records = get_all_conversations(
-                    project_dir, include_progress_stubs=not prompts_only
-                )
-            sessions = get_sessions(records)
-            matching_sessions = [s for s in sessions if s.session_id.startswith(session_prefix)]
+            records = get_session_conversations(project_dir, session_prefix, include_stubs)
+        if records is None:
+            records = get_all_conversations(project_dir, include_stubs)
+    sessions = get_sessions(records)
 
+    matching_sessions = [s for s in sessions if s.session_id.startswith(session_prefix)]
     if not matching_sessions:
         if find_subagent_file(project_dir, session_prefix):
             print(f"Error: '{session_prefix}' is a subagent ID, not a session")
