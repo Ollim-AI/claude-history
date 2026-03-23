@@ -77,11 +77,11 @@ Append `:N` for a specific context window: `prev-2:0`
 
 ### Display Flags
 
-The `transcript` and `response` commands support these flags:
+The `transcript` and `response` commands support these flags. `transcript` truncates tool results by default; `response` shows full detail (it's a drill-down command).
 
 | Flag | Effect |
 |------|--------|
-| *(default)* | Prompts + responses + tool calls + tool results (truncated) |
+| *(default)* | Prompts + responses + tool calls + tool results |
 | `--prompts-only` | User prompts only (transcript only) |
 | `--show-thinking` | Include thinking blocks |
 | `--hide-tools` | Hide tool call blocks |

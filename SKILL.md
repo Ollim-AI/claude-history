@@ -91,7 +91,7 @@ Summarize concrete changes made — not what was attempted or discussed.
 
 | Command | Description |
 |---------|-------------|
-| `response UUID` | Claude's response with tool calls + tool results (truncated) |
+| `response UUID` | Claude's response with full tool results (drill-down from transcript) |
 | `sessions --page N --size N` | Paginate sessions (default: 10 per page) |
 
 ### Session References
