@@ -158,7 +158,7 @@ def cmd_response(args: argparse.Namespace) -> None:
     show_thinking = args.show_thinking
     show_tools = not args.hide_tools
     show_tool_results = not args.hide_tool_results
-    full_detail = args.show_tool_results
+    full_detail = True  # response is a drill-down command — full detail by default
     show_hooks = args.show_hooks
 
     records, user_record = _find_prompt_records(project_dir, target_uuid)
@@ -189,7 +189,6 @@ def cmd_response(args: argparse.Namespace) -> None:
     blocks = extract_ordered_content(chain, records, include_tool_results=True)
     task_agent_map = build_task_agent_map(records) if show_tools else {}
 
-    detail_hint = f"claude-history response {target_uuid} --show-tool-results" if not full_detail else ""
     if not render_blocks(
         blocks,
         task_agent_map,
@@ -552,8 +551,7 @@ def cmd_transcript(args: argparse.Namespace) -> None:
                                     print(f"  {bold('─── end team ───')}\n")
 
                     print(green("[assistant]"))
-                    session_ref = f"{session_prefix}:{wi}" if len(windows) > 1 else session_prefix
-                    detail_hint = f"claude-history transcript {session_ref} --show-tool-results" if not full_detail else ""
+                    detail_hint = f"claude-history response {prompt.uuid[:8]}" if not full_detail else ""
                     if not render_blocks(
                         blocks,
                         task_agent_map,
