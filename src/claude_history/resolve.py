@@ -223,4 +223,4 @@ def find_prompt_across_projects(
 
 def note_cross_project(project_dir: Path) -> None:
     """Print a note that a session was found in a different project."""
-    print(f"Note: Found in {project_dir.name} (--project {project_dir})", file=sys.stderr)
+    print(f"Note: Found in other project (--project {project_dir})", file=sys.stderr)
