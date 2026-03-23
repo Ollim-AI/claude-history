@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
+from claude_history.models import ContentBlock, ToolResultContent, ToolUseContent
 from claude_history.render import (
     _short_model_name,
     bold,
@@ -14,6 +15,7 @@ from claude_history.render import (
     format_tokens,
     format_tool_summary,
     green,
+    render_blocks,
     truncate_text,
     yellow,
 )
@@ -204,3 +206,78 @@ class TestShortModelName:
 
     def test_synthetic(self) -> None:
         assert _short_model_name("<synthetic>") == "<synthetic>"
+
+
+def _tool_result_blocks(content: str, is_error: bool = False) -> list[ContentBlock]:
+    """Helper: tool_use + tool_result pair (tool_use needed for last_tool_name tracking)."""
+    return [
+        ContentBlock(type="tool_use", content=ToolUseContent(name="Bash", id="t1", input={"command": "ls"})),
+        ContentBlock(type="tool_result", content=ToolResultContent(content=content, is_error=is_error)),
+    ]
+
+
+class TestRenderBlocksToolResults:
+    def test_default_shows_tool_results(self, capsys) -> None:
+        blocks = _tool_result_blocks("file1.py\nfile2.py")
+        render_blocks(blocks, {})
+        out = capsys.readouterr().out
+        assert "file1.py" in out
+        assert "file2.py" in out
+
+    def test_hide_tool_results_suppresses(self, capsys) -> None:
+        blocks = _tool_result_blocks("file1.py")
+        render_blocks(blocks, {}, show_tool_results=False)
+        out = capsys.readouterr().out
+        assert "file1.py" not in out
+
+    def test_error_results_shown_in_full(self, capsys) -> None:
+        error_text = "\n".join(f"error line {i}" for i in range(30))
+        blocks = _tool_result_blocks(error_text, is_error=True)
+        render_blocks(blocks, {})
+        out = capsys.readouterr().out
+        assert "error line 29" in out
+        assert "more lines" not in out
+
+    def test_long_success_results_truncated(self, capsys) -> None:
+        long_text = "\n".join(f"line {i}" for i in range(40))
+        blocks = _tool_result_blocks(long_text)
+        render_blocks(blocks, {})
+        out = capsys.readouterr().out
+        assert "line 0" in out
+        assert "line 19" in out
+        assert "line 20" not in out
+        assert "20 more lines" in out
+
+    def test_full_detail_disables_truncation(self, capsys) -> None:
+        long_text = "\n".join(f"line {i}" for i in range(40))
+        blocks = _tool_result_blocks(long_text)
+        render_blocks(blocks, {}, full_detail=True)
+        out = capsys.readouterr().out
+        assert "line 39" in out
+        assert "more lines" not in out
+
+    def test_short_success_results_not_truncated(self, capsys) -> None:
+        short_text = "\n".join(f"line {i}" for i in range(10))
+        blocks = _tool_result_blocks(short_text)
+        render_blocks(blocks, {})
+        out = capsys.readouterr().out
+        assert "line 9" in out
+        assert "more lines" not in out
+
+    def test_full_detail_shows_tool_inputs(self, capsys) -> None:
+        blocks = [
+            ContentBlock(type="tool_use", content=ToolUseContent(name="Read", id="t1", input={"file_path": "/tmp/foo.py"})),
+        ]
+        render_blocks(blocks, {}, full_detail=True)
+        out = capsys.readouterr().out
+        assert '"file_path"' in out
+        assert "/tmp/foo.py" in out
+
+    def test_default_shows_tool_summaries(self, capsys) -> None:
+        blocks = [
+            ContentBlock(type="tool_use", content=ToolUseContent(name="Read", id="t1", input={"file_path": "/tmp/foo.py"})),
+        ]
+        render_blocks(blocks, {})
+        out = capsys.readouterr().out
+        assert "/tmp/foo.py" in out
+        assert '"file_path"' not in out

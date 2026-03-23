@@ -276,7 +276,8 @@ def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None
     agent_id = filepath.stem.replace("agent-", "")
     show_thinking = args.show_thinking
     show_tools = not args.hide_tools
-    show_tool_results = args.show_tool_results
+    show_tool_results = not getattr(args, "hide_tool_results", False)
+    full_detail = getattr(args, "show_tool_results", False)
     show_hooks = getattr(args, "show_hooks", False)
     prompts_only = args.prompts_only
 
@@ -340,6 +341,7 @@ def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None
                 show_thinking=show_thinking,
                 show_tools=show_tools,
                 show_tool_results=show_tool_results,
+                full_detail=full_detail,
                 show_hooks=show_hooks,
             ):
                 print(dim("(no text content)"))

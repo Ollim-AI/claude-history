@@ -81,11 +81,12 @@ The `transcript` and `response` commands support these flags:
 
 | Flag | Effect |
 |------|--------|
-| *(default)* | Prompts + responses + tool calls |
+| *(default)* | Prompts + responses + tool calls + tool results (truncated) |
 | `--prompts-only` | User prompts only (transcript only) |
 | `--show-thinking` | Include thinking blocks |
 | `--hide-tools` | Hide tool call blocks |
-| `--show-tool-results` | Include tool results (full detail, no truncation) |
+| `--show-tool-results` | Full tool results and inputs (no truncation) |
+| `--hide-tool-results` | Hide tool result blocks |
 | `--show-hooks` | Show hook errors and hook context inline |
 | `--show-system` | Show team protocol messages (transcript only) |
 

@@ -156,7 +156,8 @@ def render_blocks(
     *,
     show_thinking: bool = False,
     show_tools: bool = True,
-    show_tool_results: bool = False,
+    show_tool_results: bool = True,
+    full_detail: bool = False,
     show_hooks: bool = False,
 ) -> bool:
     """Render content blocks with flag-controlled detail.
@@ -176,7 +177,7 @@ def render_blocks(
                 assert isinstance(content, str)
                 text = content.strip()
                 print(dim("[thinking]"))
-                if show_tool_results or len(text) <= 2000:
+                if full_detail or len(text) <= 2000:
                     print(dim(text))
                 else:
                     print(dim(text[:2000] + "\n... (truncated)"))
@@ -209,7 +210,7 @@ def render_blocks(
                 has_output = True
                 agent_id = task_agent_map.get(content.id)
                 agent_suffix = f"  {dim(f'-> agent-{agent_id}')}" if agent_id else ""
-                if not show_tool_results:
+                if not full_detail:
                     summary = format_tool_summary(content.name, content.input)
                     summary_display = (
                         f" {dim(truncate_text(summary, 80))}" if summary else ""
@@ -245,11 +246,17 @@ def render_blocks(
                 else:
                     print(dim("[result]"))
                 if isinstance(content.content, str):
-                    print(
-                        dim(content.content)
-                        if not content.is_error
-                        else content.content
-                    )
+                    text = content.content
+                    show_full = full_detail or content.is_error or is_feedback
+                    if show_full:
+                        print(text if content.is_error else dim(text))
+                    else:
+                        lines = text.split("\n")
+                        if len(lines) <= 20:
+                            print(dim(text))
+                        else:
+                            print(dim("\n".join(lines[:20])))
+                            print(dim(f"... ({len(lines) - 20} more lines)"))
                 else:
                     print(dim(json.dumps(content.content, indent=2)))
                 print()
@@ -260,7 +267,7 @@ def render_blocks(
                 has_output = True
                 assert isinstance(content, HookEvent)
                 print(yellow(f"[hook: {content.hook_name}]"))
-                if show_tool_results:
+                if full_detail:
                     print(dim(content.command))
                     print()
                 prev_type = "hook"
@@ -269,7 +276,7 @@ def render_blocks(
             has_output = True
             assert isinstance(content, TaskNotification)
             print(dim(f"[system] {content.summary}"))
-            if show_tool_results and content.result:
+            if full_detail and content.result:
                 print(dim("[result]"))
                 print(dim(content.result))
             print()

@@ -157,7 +157,8 @@ def cmd_response(args: argparse.Namespace) -> None:
     target_uuid = args.uuid
     show_thinking = args.show_thinking
     show_tools = not args.hide_tools
-    show_tool_results = args.show_tool_results
+    show_tool_results = not args.hide_tool_results
+    full_detail = args.show_tool_results
     show_hooks = args.show_hooks
 
     records, user_record = _find_prompt_records(project_dir, target_uuid)
@@ -194,6 +195,7 @@ def cmd_response(args: argparse.Namespace) -> None:
         show_thinking=show_thinking,
         show_tools=show_tools,
         show_tool_results=show_tool_results,
+        full_detail=full_detail,
         show_hooks=show_hooks,
     ):
         print("No content in response.")
@@ -353,7 +355,8 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     prompts_only = args.prompts_only
     show_thinking = args.show_thinking
     show_tools = not args.hide_tools
-    show_tool_results = args.show_tool_results
+    show_tool_results = not args.hide_tool_results
+    full_detail = args.show_tool_results
     show_hooks = args.show_hooks
     show_system = getattr(args, "show_system", False)
 
@@ -553,6 +556,7 @@ def cmd_transcript(args: argparse.Namespace) -> None:
                         show_thinking=show_thinking,
                         show_tools=show_tools,
                         show_tool_results=show_tool_results,
+                        full_detail=full_detail,
                         show_hooks=show_hooks,
                     ):
                         print(dim("(no text content)"))
@@ -813,10 +817,16 @@ def main() -> None:
     response_parser.add_argument(
         "--hide-tools", action="store_true", help="Hide tool call blocks"
     )
-    response_parser.add_argument(
+    response_detail_group = response_parser.add_mutually_exclusive_group()
+    response_detail_group.add_argument(
         "--show-tool-results",
         action="store_true",
-        help="Include tool results (full detail, no truncation)",
+        help="Show full tool results and inputs (no truncation)",
+    )
+    response_detail_group.add_argument(
+        "--hide-tool-results",
+        action="store_true",
+        help="Hide tool result blocks",
     )
     response_parser.add_argument(
         "--show-hooks", action="store_true", help="Show hook errors and context inline"
@@ -865,10 +875,16 @@ def main() -> None:
     transcript_parser.add_argument(
         "--hide-tools", action="store_true", help="Hide tool call blocks"
     )
-    transcript_parser.add_argument(
+    transcript_detail_group = transcript_parser.add_mutually_exclusive_group()
+    transcript_detail_group.add_argument(
         "--show-tool-results",
         action="store_true",
-        help="Include tool results (full detail, no truncation)",
+        help="Show full tool results and inputs (no truncation)",
+    )
+    transcript_detail_group.add_argument(
+        "--hide-tool-results",
+        action="store_true",
+        help="Hide tool result blocks",
     )
     transcript_parser.add_argument(
         "--show-hooks", action="store_true", help="Show hook errors and context inline"
