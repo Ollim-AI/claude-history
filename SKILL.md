@@ -96,8 +96,9 @@ Summarize concrete changes made — not what was attempted or discussed.
 
 ### Session References
 
+- `latest` — most recently updated session
 - `prev` or `prev-N` — reference recent sessions (1-indexed)
-- Append `:W` for a specific context window: `prev-2:0`
+- Append `:W` for a specific context window: `latest:0`, `prev-2:0`
 
 ### Targeting Other Projects
 

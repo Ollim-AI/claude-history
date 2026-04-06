@@ -118,7 +118,7 @@ def resolve_slug(name: str, project_dir: Path) -> str | None:
 
 
 def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | None]:
-    """Resolve a session reference like 'prev', 'prev-2', 'prev-3:1', or a UUID prefix.
+    """Resolve a session reference like 'latest', 'prev', 'prev-2', 'prev-3:1', or a UUID prefix.
 
     Returns (session_prefix, context_window_index_or_None).
     """
@@ -129,7 +129,9 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
             ctx_window = int(idx)
             identifier = base
 
-    if identifier == "prev":
+    if identifier == "latest":
+        n = 0
+    elif identifier == "prev":
         n = 1
     elif identifier.startswith("prev-") and identifier[5:].isdigit():
         n = int(identifier[5:])
@@ -148,9 +150,8 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
 
     session_ids = get_recent_session_ids(project_dir, count=n + 1)
     if len(session_ids) <= n:
-        print(
-            f"Error: Only {len(session_ids)} sessions found, cannot resolve prev-{n}."
-        )
+        label = "latest" if n == 0 else f"prev-{n}"
+        print(f"Error: Only {len(session_ids)} sessions found, cannot resolve {label}.")
         sys.exit(1)
     return (session_ids[n][:8], ctx_window)
 

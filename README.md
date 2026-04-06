@@ -69,6 +69,7 @@ Anywhere a `SESSION` is accepted, you can use `prev` to reference recent session
 
 | Reference | Resolves to |
 |-----------|-------------|
+| `latest` | Most recently updated session |
 | `prev` or `prev-1` | Previous session |
 | `prev-2` | Two sessions ago |
 | `prev-N` | N sessions ago |

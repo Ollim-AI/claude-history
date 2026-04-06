@@ -150,6 +150,27 @@ class TestResolveSessionRef:
         assert window == 3
         assert prefix == "bbb"[:8]
 
+    def test_latest_resolves_to_most_recent(self, tmp_path: Path) -> None:
+        self._write_session(tmp_path, "aaa", 3000)
+        self._write_session(tmp_path, "bbb", 2000)
+        self._write_session(tmp_path, "ccc", 1000)
+
+        prefix, window = resolve_session_ref("latest", tmp_path)
+        assert window is None
+        assert prefix == "aaa"[:8]
+
+    def test_latest_with_window(self, tmp_path: Path) -> None:
+        self._write_session(tmp_path, "aaa", 3000)
+        self._write_session(tmp_path, "bbb", 2000)
+
+        prefix, window = resolve_session_ref("latest:2", tmp_path)
+        assert window == 2
+        assert prefix == "aaa"[:8]
+
+    def test_latest_no_sessions_exits(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit):
+            resolve_session_ref("latest", tmp_path)
+
     def test_prev_n_too_large_exits(self, tmp_path: Path) -> None:
         self._write_session(tmp_path, "aaa", 1000)
 
