@@ -1,8 +1,9 @@
 ---
 name: claude-history
 description: Deep investigation tool for past Claude Code sessions. Use when you need to understand what work was done, reconstruct decisions, find prior implementations, or build context from previous sessions. Goes beyond listing — reads full transcripts.
-allowed-tools: Bash(claude-history:*), Read
-context: fork
+allowed-tools:
+  - Bash(claude-history *)
+  - Read
 ---
 
 # Claude History
@@ -20,7 +21,7 @@ Key insight: **listing and searching are navigation — reading transcripts is t
 | A topic or keyword | `search QUERY` | Find sessions mentioning the topic |
 | Rough timeframe | `sessions --since 3d` | Filter sessions by time range |
 | "What did we just do?" | `transcript prev --prompts-only` | See user prompts from last session |
-| Need current session context | `transcript latest` | Read the active session (this skill runs without main session context) |
+| Need current session context | `transcript latest` | Read the most recently active session |
 
 `--since` works on both `sessions` and `search`. Accepts:
 - Relative: `3d` (days), `1w` (weeks), `24h` (hours), `30m` (minutes — not months)
