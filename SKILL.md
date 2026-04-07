@@ -19,7 +19,8 @@ Key insight: **listing and searching are navigation — reading transcripts is t
 |--------------|---------|---------|
 | A topic or keyword | `search QUERY` | Find sessions mentioning the topic |
 | Rough timeframe | `sessions --since 3d` | Filter sessions by time range |
-| "What did we just do?" | `transcript latest --prompts-only` | See user prompts from most recent session |
+| "What did we just do?" | `transcript prev --prompts-only` | See user prompts from last session |
+| Need current session context | `transcript latest` | Read the active session (this skill runs without main session context) |
 
 `--since` works on both `sessions` and `search`. Accepts:
 - Relative: `3d` (days), `1w` (weeks), `24h` (hours), `30m` (minutes — not months)
