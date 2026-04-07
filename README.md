@@ -65,7 +65,7 @@ claude-history <command> [options]
 
 ### Session References
 
-Anywhere a `SESSION` is accepted, you can use `prev` to reference recent sessions instead of a UUID prefix:
+Anywhere a `SESSION` is accepted, you can use `latest` or `prev` to reference recent sessions instead of a UUID prefix:
 
 | Reference | Resolves to |
 |-----------|-------------|
@@ -74,7 +74,7 @@ Anywhere a `SESSION` is accepted, you can use `prev` to reference recent session
 | `prev-2` | Two sessions ago |
 | `prev-N` | N sessions ago |
 
-Append `:N` for a specific context window: `prev-2:0`
+Append `:N` for a specific context window: `latest:0`, `prev-2:0`
 
 ### Display Flags
 

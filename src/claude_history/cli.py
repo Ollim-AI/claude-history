@@ -865,7 +865,7 @@ def main() -> None:
     )
     transcript_parser.add_argument(
         "identifier",
-        help="Session ID, agent ID, prev/prev-N, or session:window (e.g., prev, 977a21c6:0, a63fc3a)",
+        help="Session ID, agent ID, latest, prev/prev-N, or session:window (e.g., latest, prev, 977a21c6:0)",
     )
     transcript_parser.add_argument(
         "--prompts-only",
