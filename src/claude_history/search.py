@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -82,20 +83,19 @@ def prefilter_files(
 def highlight_match(text: str, query: str, context_chars: int = 60, case_sensitive: bool = False) -> str:
     """Show a snippet around the first match with the query highlighted."""
     text_flat = text.replace("\n", " ").strip()
-    if case_sensitive:
-        idx = text_flat.find(query)
-    else:
-        idx = text_flat.lower().find(query.lower())
-    if idx == -1:
+    flags = 0 if case_sensitive else re.IGNORECASE
+    m = re.search(re.escape(query), text_flat, flags)
+    if m is None:
         return truncate_text(text_flat, context_chars * 2)
+    idx, match_len = m.start(), m.end() - m.start()
     start = max(0, idx - context_chars)
-    end = min(len(text_flat), idx + len(query) + context_chars)
+    end = min(len(text_flat), idx + match_len + context_chars)
     snippet = ""
     if start > 0:
         snippet += "..."
     snippet += text_flat[start:idx]
-    snippet += yellow(text_flat[idx : idx + len(query)])
-    snippet += text_flat[idx + len(query) : end]
+    snippet += yellow(text_flat[idx : idx + match_len])
+    snippet += text_flat[idx + match_len : end]
     if end < len(text_flat):
         snippet += "..."
     return snippet

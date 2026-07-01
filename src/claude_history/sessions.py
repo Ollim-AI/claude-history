@@ -135,6 +135,11 @@ def _accumulate_session_record(sess: Session, record: dict) -> None:
     """Update a Session from a single raw record."""
     record_type = record.get("type")
 
+    # Last activity = max timestamp across every record (independent of prompts)
+    dt = parse_timestamp(record.get("timestamp"))
+    if dt and (sess.latest_timestamp is None or dt > sess.latest_timestamp):
+        sess.latest_timestamp = dt
+
     # Track explicit compaction boundaries
     if record_type == "system" and record.get("subtype") == "compact_boundary":
         dt = parse_timestamp(record.get("timestamp"))
@@ -184,8 +189,6 @@ def _accumulate_session_record(sess: Session, record: dict) -> None:
 
     dt = parse_timestamp(record.get("timestamp"))
     if dt:
-        if sess.latest_timestamp is None or dt > sess.latest_timestamp:
-            sess.latest_timestamp = dt
         if sess.first_prompt is None or dt < sess.first_prompt[0]:
             sess.first_prompt = (dt, prompt_text)
 

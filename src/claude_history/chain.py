@@ -53,10 +53,13 @@ def extract_user_prompts(records: list[Record]) -> list[Prompt]:
         message = record.get("message", {})
         content = message.get("content", [])
 
-        # Skip teammate-message records (v2.1.63+: string starting with <teammate-message)
-        # Other string-content records (bash-input, local-command-caveat, plain text
-        # prompts) are legitimate and handled by downstream classification.
-        if isinstance(content, str) and content.startswith("<teammate-message"):
+        # Skip teammate-message and task-notification records (system-injected
+        # string wrappers). Other string-content records (bash-input,
+        # local-command-caveat, plain text prompts) are legitimate and handled
+        # by downstream classification.
+        if isinstance(content, str) and content.startswith(
+            ("<teammate-message", "<task-notification>")
+        ):
             continue
 
         prompt_text = extract_content_text(content)
@@ -123,6 +126,18 @@ def is_user_text_prompt(record: dict) -> bool:
     # Teammate-message records have string content starting with <teammate-message
     if isinstance(content, str) and content.startswith("<teammate-message"):
         return False
+
+    # Plain string content is an ordinary typed prompt (the dominant string
+    # format), unless it is a system-injected wrapper (<command-message>,
+    # <task-notification>, <bash-input>, <local-command-*>, etc.) or an
+    # interruption notice.
+    if isinstance(content, str):
+        stripped = content.strip()
+        if not stripped:
+            return False
+        if stripped.startswith("<") or stripped.startswith("[Request interrupted"):
+            return False
+        return True
 
     if isinstance(content, list):
         for block in content:

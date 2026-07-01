@@ -70,6 +70,23 @@ class TestParseSince:
         result = parse_since("1d")
         assert result.tzinfo is not None
 
+    def test_today_is_local_midnight(self) -> None:
+        # Bug 3: named shortcuts mark LOCAL calendar-day boundaries, so
+        # `today` equals local midnight of the current local date.
+        result = parse_since("today")
+        local_now = datetime.now().astimezone()
+        expected = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        assert result == expected
+        assert result.utcoffset() == local_now.utcoffset()
+
+    def test_yesterday_is_local_midnight(self) -> None:
+        # Bug 3: yesterday is exactly one calendar day before today's local
+        # midnight (and stays local-midnight, not shifted by the UTC offset).
+        result = parse_since("yesterday")
+        assert result.hour == 0 and result.minute == 0 and result.second == 0
+        assert (parse_since("today") - result).days == 1
+        assert result.utcoffset() == datetime.now().astimezone().utcoffset()
+
 
 class TestEncodePath:
     def test_basic_path(self) -> None:
@@ -111,6 +128,19 @@ class TestHighlightMatch:
         result = highlight_match("Hello World", "hello")
         # Should find the match (case-insensitive search)
         assert "\033[33m" in result
+
+    def test_length_changing_lower_char_before_match(self) -> None:
+        # Bug 8: a preceding char whose .lower() changes length (İ -> 2 chars)
+        # must not shift the highlighted span onto the wrong substring.
+        result = highlight_match(
+            "İİİİİİİİİİ hello WORLD after", "world", context_chars=5
+        )
+        assert "\033[33mWORLD\033[0m" in result
+
+    def test_case_sensitive_query_length_differs(self) -> None:
+        # The highlighted slice uses the matched span length, not len(query).
+        result = highlight_match("say HELLO now", "hello")
+        assert "\033[33mHELLO\033[0m" in result
 
 
 class TestResolveSessionRef:

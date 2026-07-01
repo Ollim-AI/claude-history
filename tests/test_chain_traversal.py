@@ -121,6 +121,39 @@ class TestIsUserTextPrompt:
         record = _user("u1", "a1", text="result", is_tool_result=True)
         assert is_user_text_prompt(record) is False
 
+    def test_string_content_is_user_prompt(self) -> None:
+        # Bug 5: the dominant real format is plain-string message.content.
+        record = {"type": "user", "uuid": "u1", "message": {"content": "yes"}}
+        assert is_user_text_prompt(record) is True
+
+    def test_string_content_wrapper_is_not_user_prompt(self) -> None:
+        # Bug 5: system-injected wrappers (any '<'-prefixed string) excluded.
+        for wrapper in (
+            "<command-message>foo</command-message>",
+            "<task-notification>x</task-notification>",
+            "<bash-input>ls</bash-input>",
+            "[Request interrupted by user]",
+            "   ",
+        ):
+            record = {"type": "user", "uuid": "u1", "message": {"content": wrapper}}
+            assert is_user_text_prompt(record) is False, wrapper
+
+
+class TestGetFullResponseStringPromptBoundary:
+    def test_string_prompt_stops_chain(self) -> None:
+        # Bug 5: a plain-string user prompt is a turn boundary; without the fix
+        # get_full_response would swallow the next turn's assistant reply.
+        records = [
+            {"type": "user", "uuid": "p1", "parentUuid": None,
+             "message": {"content": [{"type": "text", "text": "first question"}]}},
+            _assistant("a1", "p1", text="answer one"),
+            {"type": "user", "uuid": "p2", "parentUuid": "a1",
+             "message": {"content": "yes"}},
+            _assistant("a2", "p2", text="answer two"),
+        ]
+        chain = get_full_response(records, "p1")
+        assert [r["uuid"] for r in chain] == ["a1"]
+
 
 # -- Performance tests against real session files --
 

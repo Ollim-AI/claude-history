@@ -122,6 +122,101 @@ class TestSearchSubagentFiles:
         assert len(matches) == 2
 
 
+def _subagent_with_blocks(tool_input: dict, tool_result: str, thinking: str) -> list[dict]:
+    """Subagent records with tool_use / tool_result / thinking blocks (no text)."""
+    return [
+        {
+            "type": "user",
+            "uuid": "u1",
+            "sessionId": "sess-1",
+            "timestamp": "2026-01-01T10:00:00Z",
+            "message": {"content": "spawn prompt"},
+        },
+        {
+            "type": "assistant",
+            "uuid": "a1",
+            "sessionId": "sess-1",
+            "timestamp": "2026-01-01T10:00:01Z",
+            "message": {
+                "model": "claude-haiku-4-5-20251001",
+                "content": [
+                    {"type": "thinking", "thinking": thinking},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "Bash",
+                        "input": tool_input,
+                    },
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "uuid": "u2",
+            "sessionId": "sess-1",
+            "timestamp": "2026-01-01T10:00:02Z",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_1",
+                        "content": tool_result,
+                    }
+                ]
+            },
+        },
+    ]
+
+
+class TestSearchSubagentNonTextTargets:
+    """Bug 9: tool/tool-result/thinking/hook targets live in non-text blocks
+    that extract_content_text drops — they must still be searchable."""
+
+    def _file(self, tmp_path: Path) -> Path:
+        f = tmp_path / "agent-blocks.jsonl"
+        _write_subagent_file(
+            f,
+            _subagent_with_blocks(
+                tool_input={"command": "echo TOOLTOKEN"},
+                tool_result="RESULTTOKEN output line",
+                thinking="THINKTOKEN reasoning here",
+            ),
+        )
+        return f
+
+    def test_finds_match_in_tool_use(self, tmp_path: Path) -> None:
+        f = self._file(tmp_path)
+        matches = search_subagent_files(
+            [f], "TOOLTOKEN", case_sensitive=False, targets={SearchTarget.TOOLS}
+        )
+        assert len(matches) == 1
+        assert matches[0].type == "subagent"
+        assert "TOOLTOKEN" in matches[0].text
+
+    def test_finds_match_in_tool_result(self, tmp_path: Path) -> None:
+        f = self._file(tmp_path)
+        matches = search_subagent_files(
+            [f], "RESULTTOKEN", case_sensitive=False, targets={SearchTarget.TOOL_RESULTS}
+        )
+        assert len(matches) == 1
+        assert "RESULTTOKEN" in matches[0].text
+
+    def test_finds_match_in_thinking(self, tmp_path: Path) -> None:
+        f = self._file(tmp_path)
+        matches = search_subagent_files(
+            [f], "THINKTOKEN", case_sensitive=False, targets={SearchTarget.THINKING}
+        )
+        assert len(matches) == 1
+        assert "THINKTOKEN" in matches[0].text
+
+    def test_tool_target_does_not_match_thinking_token(self, tmp_path: Path) -> None:
+        f = self._file(tmp_path)
+        matches = search_subagent_files(
+            [f], "THINKTOKEN", case_sensitive=False, targets={SearchTarget.TOOLS}
+        )
+        assert matches == []
+
+
 class TestPrefilterFilesMtime:
     def test_skips_old_files(self, tmp_path: Path) -> None:
         """Files older than since_dt should not be scanned."""

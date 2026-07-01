@@ -134,6 +134,26 @@ class TestParseJsonlFile:
         result = parse_jsonl_file(f, include_progress_stubs=False)
         assert len(result) == 1
 
+    def test_unicode_line_separator_not_over_split(self, tmp_path: Path) -> None:
+        # Bug 7: str.splitlines() splits on U+2028/U+2029/U+0085 (valid,
+        # unescaped inside JSON strings — Node's JSON.stringify leaves them
+        # literal), fragmenting one record into malformed pieces. Splitting
+        # only on "\n" preserves the record.
+        f = tmp_path / "test.jsonl"
+        for sep in (chr(0x2028), chr(0x2029), chr(0x0085)):
+            rec = {
+                "type": "assistant",
+                "uuid": "u1",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": f"a{sep}b SECRET"}],
+                },
+            }
+            f.write_text(json.dumps(rec, ensure_ascii=False) + "\n", encoding="utf-8")
+            result = parse_jsonl_file(f, include_progress_stubs=False)
+            assert len(result) == 1, f"lost record for {sep!r}"
+            assert result[0]["uuid"] == "u1"
+
 
 class TestParseSubagentFile:
     def test_parses_all_records_including_progress(self, tmp_path: Path) -> None:

@@ -78,11 +78,13 @@ def parse_since(value: str) -> datetime:
     ISO dates (2024-01-15), and named shortcuts (today, yesterday).
     """
     now = datetime.now(timezone.utc)
-    # Named shortcuts
+    # Named shortcuts mark LOCAL calendar-day boundaries
     if value == "today":
-        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
     if value == "yesterday":
-        return (now - timedelta(days=1)).replace(
+        return (datetime.now().astimezone() - timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
     # Relative shorthand: Nm, Nh, Nd, Nw
@@ -188,6 +190,7 @@ def cmd_response(args: argparse.Namespace) -> None:
 
     blocks = extract_ordered_content(chain, records, include_tool_results=True)
     task_agent_map = build_task_agent_map(records) if show_tools else {}
+    detail_hint = ""
 
     if not render_blocks(
         blocks,
@@ -623,8 +626,11 @@ def cmd_sessions(args: argparse.Namespace) -> None:
             return
 
     # Paginate
+    if args.size is not None and args.size < 1:
+        print(f"Error: --size must be a positive integer (got {args.size})")
+        sys.exit(1)
     page = args.page
-    page_size = args.size or PAGE_SIZE
+    page_size = args.size if args.size is not None else PAGE_SIZE
     total_pages = (len(sessions) + page_size - 1) // page_size
 
     if page < 1 or page > total_pages:

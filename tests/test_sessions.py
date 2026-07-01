@@ -207,6 +207,40 @@ class TestGetSessions:
         sessions = get_sessions(records)
         assert "my-team" in sessions[0].team_names
 
+    def test_zero_prompt_session_has_timestamp(self) -> None:
+        # Bug 1: a session with no user-text prompt (only assistant/subagent
+        # activity) must still get a latest_timestamp, not None -> "unknown".
+        records: list = [
+            _assistant("a1", "root", 5, session_id="s1"),
+            _assistant("a2", "a1", 40, session_id="s1"),
+        ]
+        sessions = get_sessions(records)
+        assert len(sessions) == 1
+        assert sessions[0].prompt_count == 0
+        assert sessions[0].latest_timestamp == _dt(40)
+
+    def test_latest_timestamp_is_last_activity_not_last_prompt(self) -> None:
+        # Bug 1: last activity should reflect the max timestamp across ALL
+        # records, not the timestamp of the last user-text prompt.
+        records: list = [
+            _user("u1", None, 0, session_id="s1"),
+            _assistant("a1", "u1", 30, session_id="s1"),
+        ]
+        sessions = get_sessions(records)
+        assert sessions[0].prompt_count == 1
+        assert sessions[0].latest_timestamp == _dt(30)
+
+    def test_zero_prompt_session_sorts_by_activity(self) -> None:
+        # Bug 1: a 0-prompt session that ran later must sort above an earlier
+        # prompted session rather than being dumped at the bottom under DT_MIN.
+        records: list = [
+            _user("u1", None, 0, session_id="prompted"),
+            _assistant("a1", "u1", 1, session_id="prompted"),
+            _assistant("a2", "root", 50, session_id="silent"),
+        ]
+        sessions = get_sessions(records)
+        assert sessions[0].session_id == "silent"
+
 
 class TestAccumulateSessionRecord:
     def test_tracks_explicit_boundary(self) -> None:

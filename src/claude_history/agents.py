@@ -173,6 +173,65 @@ def get_subagents(project_dir: Path) -> list[SubagentMetadata]:
     return subagents
 
 
+def _search_subagent_chain_targets(
+    records: list[dict],
+    q: str,
+    compare,
+    chain_targets: set[SearchTarget],
+) -> str:
+    """Extract tool/tool-result/thinking/hook text from a subagent's records.
+
+    Mirrors search.py._search_chain: extract_content_text only keeps type=='text'
+    blocks, so these targets must be pulled from their real block types. Returns
+    the first matching extracted text, or "" if none match.
+    """
+    from claude_history.chain import (
+        collect_tool_results,
+        extract_all_thinking,
+        extract_all_tools,
+        extract_hook_text,
+    )
+
+    if SearchTarget.TOOLS in chain_targets:
+        tools = extract_all_tools(records)
+        tool_text = " ".join(
+            f"{t['name']} {format_tool_summary(t['name'], t['input'])}" for t in tools
+        )
+        if tool_text and q in compare(tool_text):
+            return tool_text
+
+    if SearchTarget.THINKING in chain_targets:
+        thinking_text = " ".join(extract_all_thinking(records))
+        if thinking_text and q in compare(thinking_text):
+            return thinking_text
+
+    if SearchTarget.HOOKS in chain_targets:
+        hook_text = extract_hook_text(records, records)
+        if hook_text and q in compare(hook_text):
+            return hook_text
+
+    if SearchTarget.TOOL_RESULTS in chain_targets:
+        tool_use_ids: set[str] = set()
+        for record in records:
+            content = record.get("message", {}).get("content", [])
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        tool_id = block.get("id", "")
+                        if tool_id:
+                            tool_use_ids.add(tool_id)
+        if tool_use_ids:
+            results = collect_tool_results(records, tool_use_ids)
+            result_text = " ".join(
+                r.content if isinstance(r.content, str) else str(r.content)
+                for r in results.values()
+            )
+            if result_text and q in compare(result_text):
+                return result_text
+
+    return ""
+
+
 def search_subagent_files(
     files: list[Path],
     query: str,
@@ -187,13 +246,17 @@ def search_subagent_files(
     compare = (lambda t: t) if case_sensitive else (lambda t: t.lower())
     q = compare(query)
     matches: list[SearchMatch] = []
-    # Which record roles to search
-    search_user = bool(
-        targets & {SearchTarget.PROMPTS, SearchTarget.TOOL_RESULTS}
-    )
-    search_assistant = bool(
-        targets & {SearchTarget.RESPONSES, SearchTarget.TOOLS, SearchTarget.THINKING, SearchTarget.HOOKS}
-    )
+    # Plain-text targets extractable via extract_content_text (type=='text' only)
+    search_user = SearchTarget.PROMPTS in targets
+    search_assistant = SearchTarget.RESPONSES in targets
+    # Block-level targets whose content extract_content_text drops (tool_use,
+    # tool_result, thinking, hooks) — extracted separately over the whole file.
+    chain_targets = targets & {
+        SearchTarget.TOOLS,
+        SearchTarget.TOOL_RESULTS,
+        SearchTarget.THINKING,
+        SearchTarget.HOOKS,
+    }
 
     for filepath in files:
         records = parse_subagent_file(filepath)
@@ -214,6 +277,14 @@ def search_subagent_files(
                 text = content if isinstance(content, str) else extract_content_text(content)
                 if text and q in compare(text):
                     matched_text = text
+
+        # Tool/tool-result/thinking/hook content lives in non-text blocks that
+        # extract_content_text discards; extract it the same way session search
+        # does so subagent hits on these targets are not silently missed.
+        if not matched_text and chain_targets:
+            matched_text = _search_subagent_chain_targets(
+                records, q, compare, chain_targets
+            )
 
         if matched_text:
             matches.append(

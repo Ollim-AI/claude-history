@@ -70,7 +70,7 @@ def parse_jsonl_file(
             encoding="utf-8",
             errors="replace",
         )
-        for line in result.stdout.splitlines():
+        for line in result.stdout.split("\n"):
             if line.strip():
                 try:
                     records.append(json.loads(line))

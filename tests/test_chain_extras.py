@@ -281,11 +281,13 @@ class TestExtractUserPromptsStringContent:
         assert len(prompts) == 1
         assert not prompts[0].is_user_prompt
 
-    def test_task_notification_included(self) -> None:
+    def test_task_notification_excluded(self) -> None:
+        # Bug 6: task-notification wrappers are system-injected, not user prompts.
+        # An assistant-child task-notification would otherwise pass the
+        # is_user_prompt filter used by `search -p` / `transcript --prompts-only`.
         records = self._make_records(
             "<task-notification><task-id>abc</task-id><status>completed</status></task-notification>",
-            has_assistant_child=False,
+            has_assistant_child=True,
         )
         prompts = extract_user_prompts(records)
-        assert len(prompts) == 1
-        assert not prompts[0].is_user_prompt
+        assert len(prompts) == 0
