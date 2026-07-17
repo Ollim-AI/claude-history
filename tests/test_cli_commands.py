@@ -270,3 +270,44 @@ class TestSearchShowsSessionId:
         cmd_search(args)
         out = capsys.readouterr().out
         assert "s:deadbeef" in out
+
+
+class TestSubagentDetail:
+    def _project(self, tmp_path: Path) -> Path:
+        agent = (tmp_path / "11111111-2222-3333-4444-555555555555" / "subagents"
+                 / "agent-abc123f.jsonl")
+        agent.parent.mkdir(parents=True)
+        agent.write_text(json.dumps({
+            "type": "user", "uuid": "u1",
+            "sessionId": "11111111-2222-3333-4444-555555555555",
+            "timestamp": "2020-01-01T00:00:00Z",
+            "message": {"role": "user", "content": "do the thing"},
+        }) + "\n")
+        return tmp_path
+
+    def _args(self, project: Path, **kw) -> argparse.Namespace:
+        base = dict(project=str(project), cwd=None, agent_id=None,
+                    session=None, since=None)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_detail_ignores_listing_filters(self, tmp_path: Path, capsys) -> None:
+        # An old agent must stay reachable by ID even when --since would
+        # filter it from the listing (previously: 'not found in any project').
+        from claude_history.cli import cmd_subagents
+
+        project = self._project(tmp_path)
+        cmd_subagents(self._args(project, agent_id="abc123f", since="1d"))
+        out = capsys.readouterr().out
+        assert "agent-abc123f.jsonl" in out
+        assert "do the thing" in out
+
+    def test_missing_agent_errors_on_stderr(self, tmp_path: Path, capsys) -> None:
+        from claude_history.cli import cmd_subagents
+
+        project = self._project(tmp_path)
+        with pytest.raises(SystemExit):
+            cmd_subagents(self._args(project, agent_id="ffffffff"))
+        captured = capsys.readouterr()
+        assert "No subagent found" in captured.err
+        assert captured.out == ""
