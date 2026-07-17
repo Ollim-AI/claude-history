@@ -447,3 +447,25 @@ class TestCaseInsensitiveHexIds:
 
     def test_uppercase_prefix_with_window(self, tmp_path: Path) -> None:
         assert resolve_session_ref("9AAEDC03:2", tmp_path) == ("9aaedc03", 2)
+
+
+class TestSearchTargetConflicts:
+    def _args(self, **kw) -> argparse.Namespace:
+        base = dict(target=None, prompts_only=False, responses_only=False)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_p_and_r_together_rejected(self, capsys) -> None:
+        # Previously -p silently won and -r was ignored.
+        from claude_history.cli import _parse_targets
+
+        with pytest.raises(SystemExit):
+            _parse_targets(self._args(prompts_only=True, responses_only=True))
+        assert "cannot be combined" in capsys.readouterr().err
+
+    def test_target_with_p_rejected(self, capsys) -> None:
+        from claude_history.cli import _parse_targets
+
+        with pytest.raises(SystemExit):
+            _parse_targets(self._args(target="tools", prompts_only=True))
+        assert "cannot be combined" in capsys.readouterr().err

@@ -667,6 +667,9 @@ def _parse_targets(args: argparse.Namespace) -> set[SearchTarget]:
     if args.target and (args.prompts_only or args.responses_only):
         print("Error: --target cannot be combined with -p/--prompts-only or -r/--responses-only", file=sys.stderr)
         sys.exit(1)
+    if args.prompts_only and args.responses_only:
+        print("Error: -p/--prompts-only cannot be combined with -r/--responses-only (use -T to search multiple targets)", file=sys.stderr)
+        sys.exit(1)
 
     if args.target:
         raw = [t.strip() for t in args.target.split(",") if t.strip()]
