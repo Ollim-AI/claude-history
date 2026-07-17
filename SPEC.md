@@ -15,17 +15,24 @@ This document describes the JSONL format used by Claude Code to persist conversa
 | `{UUID}.jsonl` | Main session file |
 | `agent-{hash}.jsonl` | Top-level agent file (7-char hex, legacy clients ≤2.0.x) |
 | `{UUID}/subagents/agent-{hash}.jsonl` | Subagent file (7-char hex ≤v2.1.49, 17-char hex v2.1.50+) |
-| `{UUID}/subagents/agent-acompact-{hash}.jsonl` | Compacted subagent file (6-char hex ≤v2.1.49, 16-char hex v2.1.50+) |
+| `{UUID}/subagents/agent-[{label}-]{hash}.jsonl` | Labeled variants: `acompact-` (compacted, 6/16-char hex) and others (e.g. `aside_question-`); record `agentId` includes the label |
+| `{UUID}/subagents/agent-{hash}.meta.json` | Sidecar (v2.1.94+): `{"agentType", "description"?, "toolUseId"?, "spawnDepth"?, "name"?}`. Orphan metas with no `.jsonl` exist (~5%) — meta presence does not imply a transcript |
+| `{UUID}/subagents/workflows/wf_{8hex}-{3hex}/agent-{hash}.jsonl` | Workflow subagent (v2.1.154+), plus 1:1 `.meta.json` sidecars |
+| `{UUID}/subagents/workflows/wf_{run}/journal.jsonl` | Workflow journal: `{"type":"started","key":"v2:{sha256}","agentId"}` and `{"type":"result",...,"result":<string or arbitrary JSON>}` per agent |
+| `{UUID}/workflows/wf_{run}.json`, `{UUID}/workflows/scripts/*.js` | Workflow run manifests and scripts (not JSONL) |
 | `{UUID}/tool-results/{id}.txt` | Tool result output (see naming patterns below) |
+| `sessions-index.json` | Per-project index (project root, v2.1.2xx) — not a session file |
 
 Older client versions (≤2.0.x) stored subagent files directly in the project directory as `agent-{hash}.jsonl`. Newer versions use the `{UUID}/subagents/` subdirectory.
 
 **Hash length change at v2.1.50:** Agent file hashes changed from 7-char to 17-char hex, and acompact hashes from 6-char to 16-char hex. The transition is clean at v2.1.50 with no overlap. A parser should accept variable-length hex hashes rather than hardcoding lengths.
 
-**Tool-results file naming:** Three naming patterns exist for files in `{UUID}/tool-results/`:
-- `toolu_XXXX.txt` — the `tool_use_id` directly (all versions)
-- 7-char hex: e.g., `b174ed9.txt` (v2.1.49-2.1.50)
-- 9-char alphanumeric: e.g., `b1rrxdut3.txt` (v2.1.53+)
+**Tool-results file naming:** Patterns observed in `{UUID}/tool-results/`:
+- `toolu_XXXX.txt` — the `tool_use_id` directly (all versions); also `toolu_XXXX.json` (array of content blocks, MCP)
+- 7-char hex: e.g., `b174ed9.txt` (v2.1.49-2.1.50, extinct in current data)
+- 9-char alphanumeric: e.g., `b1rrxdut3.txt` (v2.1.53+, dominant)
+- `mcp-{server}-{tool}-{unix_ms}.txt` — MCP tool outputs
+- `webfetch-{unix_ms}-{6alnum}.pdf` and `pdf-{UUID}/page-{N}.jpg` — fetched documents and rendered pages (page numbers inconsistently zero-padded)
 
 **Multi-session files:** A JSONL file may contain records from multiple sessions. When a session is continued from a previous one, the new file includes a small number of records from the previous session at the start (typically the last user prompt and `turn_duration` system records). Filter by `sessionId` when processing a specific session to avoid double-counting.
 
@@ -42,7 +49,7 @@ Project directories use dash-encoded paths (slashes and dots replaced with dashe
 Claude Code writes records incrementally as the API response streams in. Each assistant record captures one content block (thinking, text, or tool_use). This has several important consequences:
 
 - Multiple assistant records form a chain for a single API response and share the same `message.id`
-- `stop_reason` is typically `null` because records are written before the final stop reason is determined. Non-null values (`tool_use`, `end_turn`, `stop_sequence`) appear on the final record of a streaming response.
+- `stop_reason` semantics changed by v2.1.199: it is now populated on nearly every assistant record (`tool_use` dominant, some `null`/`end_turn`), including thinking/text records and every record of a parallel tool_use group. In older files it was typically `null` except on the final record of a streaming response. Do not use it to detect the final record.
 - Token usage per record is incremental (small values like `output_tokens: 1`), not cumulative for the full turn
 - To get total token usage for a response, sum across all assistant records in the response chain
 
@@ -281,9 +288,9 @@ These are distinct from `system/api_error` records (which track retry metadata).
 
 ---
 
-### 3. Progress Record (`type: "progress"`)
+### 3. Progress Record (`type: "progress"`) — legacy, retired between v2.1.37 and v2.1.94
 
-Progress tracking for subagent conversations, bash commands, hooks, and other async operations.
+Progress tracking for subagent conversations, bash commands, hooks, and other async operations. **No file from v2.1.94 onward contains a progress record** (verified corpus-wide: 270 files, 180k lines, zero; last observed at v2.1.37 — no local files exist in the 2.1.47–2.1.94 gap to narrow it further). In legacy files progress lines are ~78% of corpus bytes. Hook data later moved to `attachment` records (`hook_success`/`hook_additional_context`, see §9), Task→subagent links to `toolUseResult.agentId`. Everything below applies only to legacy files.
 
 **Note:** Progress records form chains via `parentUuid`. The first progress record in a chain typically has the same `parentUuid` as the corresponding user tool_result record (both pointing to the assistant's tool_use record). Subsequent progress records chain to the previous progress record (~88% of progress records point to another progress record). When walking the response chain, skip progress records to follow the main conversation flow.
 
@@ -373,7 +380,7 @@ PreToolUse:Read hook additional context: CRITICAL: cli.py is 1117 lines. This fi
 
 Format: `{hookEvent}:{toolName} hook additional context: {message}`. These tags are embedded in the assistant's text content and can be extracted via regex.
 
-#### MCP Progress (`data.type: "mcp_progress"`, v2.1.45+)
+#### MCP Progress (`data.type: "mcp_progress"`, v2.1.45+ — still unverified 2026-07-16: no local files in the 2.1.45–2.1.94 window carry it)
 
 Tracks MCP server tool invocations:
 
@@ -439,11 +446,17 @@ System metadata records.
 
 | Subtype | Description | Key Fields |
 |---------|-------------|------------|
-| `turn_duration` | Records interaction duration | `durationMs` |
-| `compact_boundary` | Context window boundary marker | `compactMetadata`, `logicalParentUuid`, `level` |
-| `api_error` | API error with retry info | `error`, `level`, `retryInMs`, `retryAttempt`, `maxRetries` |
+| `turn_duration` | Records interaction duration | `durationMs`, `messageCount` (v2.1.94+), `pendingWorkflowCount`/`pendingBackgroundAgentCount` (v2.1.154+) |
+| `compact_boundary` | Context window boundary marker | `compactMetadata` (`trigger` may be `"auto"` or `"manual"`; `preCompactDiscoveredTools` v2.1.97+), `logicalParentUuid`, `level` |
+| `api_error` | API error with retry info | `error`, `level`, `retryInMs`, `retryAttempt`, `maxRetries`. The `error` schema changed twice; since v2.1.152: `{message, status, requestId, formatted, connection, isNetworkDown, rateLimits}` (`requestID` renamed to `requestId`). None observed ≥2.1.177 |
 | `local_command` | Slash command execution | `content`, `level` |
-| `stop_hook_summary` | Post-turn hook execution summary (v2.1.38+) | `hookCount`, `hookInfos`, `hookErrors`, `preventedContinuation`, `stopReason`, `hasOutput`, `level`, `toolUseID` |
+| `stop_hook_summary` | Post-turn hook execution summary (v2.1.38+) | `hookCount`, `hookInfos` (+`durationMs` per hook v2.1.96+), `hookErrors`, `preventedContinuation`, `stopReason`, `hasOutput`, `level`, `toolUseID`, `hookAdditionalContext` (v2.1.168+) |
+| `away_summary` | Recap after user returns (v2.1.104+, frequent) | `content` |
+| `scheduled_task_fire` | Scheduled/loop wakeup notice (v2.1.104+) | `content` |
+| `informational` | Client warning text | `content`, `level` |
+| `bridge_status` | Remote-control bridge status | `content`, `url` |
+| `model_refusal_fallback` | Model fallback on refusal (v2.1.170+) | `direction`, `trigger`, `originalModel`, `fallbackModel`, `requestId`, `content`, `level` |
+| `agents_killed` | Agents terminated marker | (common fields only) |
 
 **Compact Boundary Record:**
 ```json
@@ -571,6 +584,8 @@ In user messages responding to tool calls:
   "is_error": false
 }
 ```
+
+`content` is a string or an array of blocks. Array blocks observed (2.1.19x+): `{"type":"text",...}`, `{"type":"tool_reference","tool_name":...}` (ToolSearch), and `{"type":"image","source":{"type":"base64","media_type":...,"data":...}}` (Read on images — `data` can be hundreds of KB; renderers should elide it). `image` blocks also appear directly in user `message.content` arrays (pasted images, sometimes `isMeta`). The top-level `toolUseResult` field may likewise be a string or an array, not only an object.
 
 **Persisted output:** When a tool result exceeds a size threshold, the full output is saved to `{UUID}/tool-results/{tool_use_id}.txt` and the inline `content` is replaced with a `<persisted-output>` tag:
 
@@ -791,6 +806,27 @@ User-set session name via `claude --resume "name"` or `claude --name "name"`. Mi
 - May appear multiple times in a file (observed duplicates)
 - Used by `claude --resume` to find sessions by friendly name
 
+### 9. Attachment Record (`type: "attachment"`, ~v2.1.156+)
+
+**Chain-critical.** Full records with `uuid`/`parentUuid` that clients interpose between a user prompt and the first assistant record, and between records mid-turn. Since progress records retired at the same time, attachments are now the bridge records of every turn: **a parser that only follows direct parent→child links from the prompt to an assistant record drops most prompts and responses.** Walk through attachments (and any non-user-prompt record) until the next user text prompt.
+
+Payload is a nested object under the `attachment` key with its own `type`. Observed `attachment.type` values (2.1.199–2.1.212): `task_reminder`, `hook_success` (`command`, `content`, `exitCode`, `hookName`, `hookEvent`, `toolUseID`, `stdout`, `stderr`, `durationMs`), `hook_additional_context` (`content`, `hookName`, `hookEvent`, `toolUseID`), `deferred_tools_delta`, `skill_listing`, `queued_command`, `agent_listing_delta`, `ultra_effort_enter`, `edited_text_file`, `command_permissions`, `nested_memory`, `ultrathink_effort`, `plan_mode_exit`, `dynamic_skill`. The two `hook_*` types are the successors to `hook_progress` progress records.
+
+### 10. Minimal Metadata Records (no `uuid`/`parentUuid`, ≥v2.1.94 era)
+
+Session-level state appended as tiny records; none participate in chains. Safe to skip for transcript purposes:
+
+| Type | Fields | Notes |
+|------|--------|-------|
+| `mode` | `mode`, `sessionId` | e.g. `"normal"` |
+| `permission-mode` | `permissionMode`, `sessionId` | e.g. `"bypassPermissions"` |
+| `ai-title` | `aiTitle`, `sessionId` | auto-generated title (counterpart to `custom-title`); duplicates common |
+| `last-prompt` | `lastPrompt`?, `leafUuid`, `sessionId` | functional successor to the `summary` record's leafUuid mechanism |
+| `agent-setting` | `agentSetting`, `sessionId` | e.g. `"general-purpose"` |
+| `file-history-delta` | `messageId`, `snapshotMessageId`, `trackingPath`, `backup`, `timestamp` | incremental companion to `file-history-snapshot`; no `sessionId` |
+
+Also: system records gained an `away_summary` subtype (full chain participant with `uuid`/`parentUuid` and a `content` summary string), and task-notification delivery changed — notifications no longer arrive as plain-string user records but inside `attachment`/`queue-operation` records and text/tool_result blocks of array-content user records (~v2.1.199+).
+
 ---
 
 ## Common Fields Reference
@@ -817,6 +853,13 @@ User-set session name via `claude --resume "name"` or `claude --name "name"`. Mi
 | `isSidechain` | boolean | True for records in subagent threads (always false in main session file) |
 | `isMeta` | boolean | On system records: `false` when present (absent on some `api_error` records). On user records: `true` for system-injected messages (e.g., local commands) |
 | `userType` | string | User type (typically "external") |
+| `entrypoint` | string | Client entrypoint, e.g. `"cli"` (v2.1.19x+, on most records) |
+| `session_id` | string | snake_case duplicate of `sessionId` (v2.1.19x+); values never differ — parsers should read `sessionId` |
+| `promptId` | string | Groups a turn's user records by originating prompt (v2.1.19x+) |
+| `effort` | string | Reasoning effort on assistant records, e.g. `"high"`, `"xhigh"` |
+| `attributionSkill` / `attributionMcpServer` / `attributionMcpTool` | string | Attributes assistant records to the active skill or MCP tool |
+| `agentName` | string | Named-agent counterpart to `teamName` |
+| `origin` / `promptSource` | object / string | Prompt provenance on user records, e.g. `{"kind":"human"}`, `"typed"`, `"queued"` |
 | `slug` | string | Human-readable conversation identifier |
 | `agentId` | string | Hex agent identifier (7-char ≤v2.1.49, 17-char v2.1.50+) |
 | `requestId` | string | API request ID |
@@ -828,17 +871,17 @@ User-set session name via `claude --resume "name"` or `claude --name "name"`. Mi
 ## Models
 
 Known model identifiers:
-- `claude-opus-4-6`
-- `claude-sonnet-4-6`
-- `claude-opus-4-5-20251101`
-- `claude-sonnet-4-5-20250929`
-- `claude-haiku-4-5-20251001`
+- `claude-fable-5` (dominant in 2.1.2xx data)
+- `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`
+- `claude-sonnet-5`, `claude-sonnet-4-6`
+- `claude-opus-4-5-20251101`, `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`
+- Dotted variants (`claude-opus-4.6`, `claude-sonnet-4.6`) appear in tool inputs/results, not `message.model`
 
 Short aliases (observed in subagent `data.model` or tool inputs, not in `message.model`):
-- `sonnet`, `haiku`, `opus`
+- `sonnet`, `haiku`, `opus`, `fable`
 
 Other observed values:
-- `<synthetic>` — system-generated (non-API) assistant records (see API Error Messages)
+- `<synthetic>` — system-generated (non-API) assistant records (see API Error Messages); these carry `"service_tier": null` (otherwise always `"standard"`)
 
 ---
 
@@ -1010,7 +1053,7 @@ Shutdown request ID format: `shutdown-{unix_ms}@{recipient_name}`
 
 ## Version History
 
-Observed client versions: `2.0.64` through `2.1.76`
+Observed client versions: `2.0.64` through `2.1.212`
 
 Notable changes by version:
 - **v2.1.38**: `sourceToolUseID` on meta user records, `isApiErrorMessage` assistant records, `stop_hook_summary` system subtype, `caller` field on tool_use blocks
@@ -1019,6 +1062,10 @@ Notable changes by version:
 - **v2.1.50**: Agent hash length changed from 7-char to 17-char hex; acompact hash from 6-char to 16-char hex; new `message.usage` fields (`server_tool_use`, `inference_geo`, `iterations`, `speed`); new message fields (`context_management`, `container`)
 - **v2.1.63**: Agent teams support: `teamName` field, teammate-message user records, TeamCreate/TeamDelete/SendMessage/TaskCreate/TaskUpdate/TaskList tools, `teammate_spawned` Agent toolUseResult variant, no `agent_progress` for team subagents
 - **v2.1.76**: `slug` field on progress records (was previously only on user/assistant records); parallel Agent tool_use records chain through deep progress stub chains instead of directly (see §Parallel Tool Calls); `[Request interrupted by user for tool use]` user records lack `isMeta` flag
+- **v2.1.94** (mtime-anchored): `agent-{hash}.meta.json` sidecars appear alongside subagent files
+- **v2.1.154** (mtime-anchored): workflow subagent layout `{UUID}/subagents/workflows/wf_{run}/` with per-run `journal.jsonl`; `{UUID}/workflows/` manifests
+- **~v2.1.156**: `attachment` records interpose in the parentUuid chain (see §9); progress records retired; hook data moves to `attachment.hook_success`/`hook_additional_context`; Task→agent links move to `toolUseResult.agentId`; minimal metadata records (`mode`, `permission-mode`, `ai-title`, `last-prompt`, `agent-setting`, `file-history-delta`)
+- **v2.1.19x–2.1.212**: `entrypoint`/`session_id`/`promptId`/`effort`/attribution fields; `stop_reason` populated on nearly all assistant records; task-notifications delivered in array content instead of string user records; teammate-message wrappers prefixed with explanatory text and `color` attribute now optional; `image` blocks in user content and tool_result content (base64, up to ~634KB observed); `tool_reference` blocks in ToolSearch results; `away_summary` system subtype; `toolUseResult` may be a string or array, not only an object
 
 ---
 
@@ -1068,4 +1115,4 @@ This spec is reverse-engineered from observed JSONL data. Claude Code does not p
 - Mark unverifiable claims (e.g., record types with zero occurrences in local data)
 - Update this "Version History" section with notable changes per version
 
-**Last audited:** 2026-03-15 against versions 2.0.64–2.1.76 (v2.1.76: parallel agent chains, slug on progress, interruption messages)
+**Last audited:** 2026-07-16 against versions 2.0.64–2.1.212 (v2.1.15x+: attachment records replace progress records; workflow subagent layout; see Version History)
