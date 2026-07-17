@@ -114,7 +114,9 @@ def search_records(
     q = compare(query)
     seen: set[str] = set()
 
-    prompts = extract_user_prompts(records)
+    # Built once; prompt classification and chain search share them
+    indexes = build_record_indexes(records)
+    prompts = extract_user_prompts(records, indexes=indexes)
     # Filter to user-typed prompts only
     prompts = [p for p in prompts if p.is_user_prompt]
 
@@ -126,7 +128,6 @@ def search_records(
         SearchTarget.THINKING,
         SearchTarget.HOOKS,
     }
-    indexes = build_record_indexes(records) if need_chain else None
 
     for prompt in prompts:
         prompt_text = prompt.text

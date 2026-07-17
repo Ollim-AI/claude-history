@@ -6,7 +6,7 @@ import json
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field  # noqa: I001
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -280,6 +280,42 @@ _TEAMMATE_MSG_RE = re.compile(
 
 
 # --- Leaf utilities (no internal module dependencies) ---
+
+
+def die(*lines: str, code: int = 1) -> None:
+    """Print error lines to stderr and exit.
+
+    Owns the 'errors never touch stdout' contract so call sites cannot
+    regress to bare print().
+    """
+    for line in lines:
+        print(line, file=sys.stderr)
+    sys.exit(code)
+
+
+def warn_ambiguous(kind: str, query: str, ids: list[str]) -> None:
+    """Note on stderr that a prefix matched several items; first one wins."""
+    others = ", ".join(ids[1:4])
+    print(
+        f"Note: {len(ids)} {kind} match '{query}'; showing {ids[0]}"
+        f" (others: {others})",
+        file=sys.stderr,
+    )
+
+
+def paginate(items: list, page: int, size: int | None, default_size: int) -> tuple[list, int]:
+    """Validate --page/--size and slice one page; returns (page_items, total_pages).
+
+    Exits with an error for a non-positive size or an out-of-range page.
+    """
+    if size is not None and size < 1:
+        die(f"Error: --size must be a positive integer (got {size})")
+    page_size = size if size is not None else default_size
+    total_pages = (len(items) + page_size - 1) // page_size
+    if page < 1 or page > total_pages:
+        die(f"Error: Page {page} out of range (1-{total_pages})")
+    start = (page - 1) * page_size
+    return items[start : start + page_size], total_pages
 
 
 def parse_timestamp(ts: str | None) -> datetime | None:

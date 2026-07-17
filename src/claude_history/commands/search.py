@@ -7,7 +7,7 @@ import sys
 
 from claude_history.agents import search_subagent_files
 from claude_history.io import parse_jsonl_file
-from claude_history.models import ALL_SEARCH_TARGETS, DT_MIN, SearchTarget
+from claude_history.models import ALL_SEARCH_TARGETS, DT_MIN, SearchTarget, die
 from claude_history.render import cyan, dim, format_time, green, yellow
 from claude_history.resolve import parse_since, resolve_project_dir
 from claude_history.search import highlight_match, prefilter_files, search_records
@@ -16,24 +16,22 @@ from claude_history.search import highlight_match, prefilter_files, search_recor
 def _parse_targets(args: argparse.Namespace) -> set[SearchTarget]:
     """Resolve --target, -p, -r flags into a set of SearchTarget values."""
     if args.target and (args.prompts_only or args.responses_only):
-        print("Error: --target cannot be combined with -p/--prompts-only or -r/--responses-only", file=sys.stderr)
-        sys.exit(1)
+        die("Error: --target cannot be combined with -p/--prompts-only or -r/--responses-only")
     if args.prompts_only and args.responses_only:
-        print("Error: -p/--prompts-only cannot be combined with -r/--responses-only (use -T to search multiple targets)", file=sys.stderr)
-        sys.exit(1)
+        die(
+            "Error: -p/--prompts-only cannot be combined with -r/--responses-only (use -T to search multiple targets)",
+        )
 
     if args.target:
         raw = [t.strip() for t in args.target.split(",") if t.strip()]
         if not raw:
             valid = ", ".join(sorted(ALL_SEARCH_TARGETS))
-            print(f"Error: --target requires at least one value. Valid targets: {valid}", file=sys.stderr)
-            sys.exit(1)
+            die(f"Error: --target requires at least one value. Valid targets: {valid}")
         targets: set[SearchTarget] = set()
         for name in raw:
             if name not in ALL_SEARCH_TARGETS:
                 valid = ", ".join(sorted(ALL_SEARCH_TARGETS))
-                print(f'Error: Unknown target "{name}". Valid targets: {valid}', file=sys.stderr)
-                sys.exit(1)
+                die(f'Error: Unknown target "{name}". Valid targets: {valid}')
             targets.add(SearchTarget(name))
         return targets
 
@@ -43,10 +41,11 @@ def _parse_targets(args: argparse.Namespace) -> set[SearchTarget]:
         return {SearchTarget.RESPONSES, SearchTarget.TOOLS, SearchTarget.HOOKS}
 
     valid = ", ".join(sorted(ALL_SEARCH_TARGETS))
-    print("Error: search requires a target. Use -T/--target, -p, or -r.", file=sys.stderr)
-    print(f"  Valid targets: {valid}", file=sys.stderr)
-    print('  Example: claude-history search "query" -T prompts,tools', file=sys.stderr)
-    sys.exit(1)
+    die(
+        "Error: search requires a target. Use -T/--target, -p, or -r.",
+        f"  Valid targets: {valid}",
+        '  Example: claude-history search "query" -T prompts,tools',
+    )
 
 
 def cmd_search(args: argparse.Namespace) -> None:
@@ -55,11 +54,9 @@ def cmd_search(args: argparse.Namespace) -> None:
 
     query = args.query
     if not query.strip():
-        print("Error: search query must not be empty", file=sys.stderr)
-        sys.exit(1)
+        die("Error: search query must not be empty")
     if args.limit < 1:
-        print(f"Error: --limit must be a positive integer (got {args.limit})", file=sys.stderr)
-        sys.exit(1)
+        die(f"Error: --limit must be a positive integer (got {args.limit})")
     case_sensitive = args.case_sensitive
     targets = _parse_targets(args)
 
@@ -119,13 +116,11 @@ def cmd_search(args: argparse.Namespace) -> None:
         return
 
     total = len(matches)
-    limit = args.limit
-    shown = matches if total <= limit else matches[:limit]
-    if total > limit:
-        print(f'Found {yellow(total)} match(es) for "{query}", showing newest {limit} (raise with --limit N, narrow with --since):\n')
+    if total > args.limit:
+        matches = matches[: args.limit]
+        print(f'Found {yellow(total)} match(es) for "{query}", showing newest {args.limit} (raise with --limit N, narrow with --since):\n')
     else:
         print(f'Found {yellow(total)} match(es) for "{query}":\n')
-    matches = shown
 
     type_labels = {
         "prompt": green("[prompt]"),

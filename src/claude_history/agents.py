@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from claude_history.io import (
+    agent_id_from_path,
     iter_subagent_files,
     parse_jsonl_file,
     parse_subagent_file,
@@ -84,7 +85,7 @@ def _extract_error_texts(record: dict) -> list[str]:
 def extract_subagent_metadata(filepath: Path, records: list[dict]) -> SubagentMetadata:
     """Extract metadata from a subagent's parsed records."""
     session_id = subagent_session_id(filepath)
-    agent_id = filepath.stem.replace("agent-", "")
+    agent_id = agent_id_from_path(filepath)
 
     # First record metadata
     first = records[0] if records else {}
@@ -267,7 +268,7 @@ def search_subagent_files(
         records = parse_subagent_file(filepath)
         if not records:
             continue
-        agent_id = filepath.stem.replace("agent-", "")
+        agent_id = agent_id_from_path(filepath)
         session_id = records[0].get("sessionId", "")
         earliest_ts = parse_timestamp(records[0].get("timestamp"))
         matched_text = ""
@@ -349,7 +350,7 @@ def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None
         else:
             records.append(r)
 
-    agent_id = filepath.stem.replace("agent-", "")
+    agent_id = agent_id_from_path(filepath)
     show_thinking = args.show_thinking
     show_tools = not args.hide_tools
     show_tool_results = not getattr(args, "hide_tool_results", False)

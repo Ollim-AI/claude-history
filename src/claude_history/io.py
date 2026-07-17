@@ -155,11 +155,7 @@ def get_session_conversations(
     of parsing all files. Returns None if no matching file found (caller
     should fall back to get_all_conversations).
     """
-    matching = sorted(
-        project_dir.glob(f"{session_prefix}*.jsonl"),
-        key=lambda f: f.stat().st_mtime,
-        reverse=True,
-    )
+    matching = newest_first(project_dir.glob(f"{session_prefix}*.jsonl"))
     if not matching:
         return None
     # Ambiguous prefixes resolve to the most recently active session
@@ -171,11 +167,32 @@ def get_session_conversations(
     return records
 
 
+def newest_first(paths: Iterator[Path] | list[Path]) -> list[Path]:
+    """Sort paths by mtime, newest first, dropping files that vanish mid-scan.
+
+    Ambiguous prefixes and cross-file searches resolve to the most recently
+    active file; this owns that policy (and the stat TOCTOU guard) once.
+    """
+    stamped = []
+    for p in paths:
+        try:
+            stamped.append((p.stat().st_mtime, p))
+        except OSError:
+            continue
+    stamped.sort(key=lambda t: t[0], reverse=True)
+    return [p for _, p in stamped]
+
+
+def agent_id_from_path(filepath: Path) -> str:
+    """Extract the agent ID from a subagent file path (agent-{hash}.jsonl)."""
+    return filepath.stem.removeprefix("agent-")
+
+
 def iter_subagent_files(project_dir: Path) -> Iterator[Path]:
     """Yield subagent JSONL files across both storage layouts.
 
     Agent-tool subagents: {session}/subagents/agent-{hash}.jsonl
-    Workflow subagents (v2.1.79+): {session}/subagents/workflows/{run}/agent-{hash}.jsonl
+    Workflow subagents (observed from v2.1.154): {session}/subagents/workflows/{run}/agent-{hash}.jsonl
     """
     yield from project_dir.glob("*/subagents/agent-*.jsonl")
     yield from project_dir.glob("*/subagents/workflows/*/agent-*.jsonl")
@@ -194,9 +211,9 @@ def find_subagent_file(project_dir: Path, agent_id_prefix: str) -> Path | None:
 
     Returns the first matching file, or None.
     """
+    agent_id_prefix = agent_id_prefix.lower()  # stored IDs are lowercase hex
     for path in iter_subagent_files(project_dir):
-        stem_id = path.stem.replace("agent-", "")
-        if stem_id.startswith(agent_id_prefix):
+        if agent_id_from_path(path).startswith(agent_id_prefix):
             return path
     return None
 

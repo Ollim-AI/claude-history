@@ -18,6 +18,7 @@ from claude_history.io import (
     find_subagent_file,
     get_all_conversations,
     get_session_conversations,
+    newest_first,
 )
 from claude_history.models import (
     _CYAN,
@@ -26,8 +27,10 @@ from claude_history.models import (
     DT_MIN,
     TeammateMessage,
     ToolUseContent,
+    die,
     iter_user_records,
     parse_teammate_message,
+    warn_ambiguous,
 )
 from claude_history.render import (
     bold,
@@ -91,18 +94,9 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     show_hooks = args.show_hooks
     show_system = getattr(args, "show_system", False)
 
-    candidates = sorted(
-        project_dir.glob(f"{session_prefix}*.jsonl"),
-        key=lambda f: f.stat().st_mtime,
-        reverse=True,
-    )
+    candidates = newest_first(project_dir.glob(f"{session_prefix}*.jsonl"))
     if len(candidates) > 1:
-        others = ", ".join(f.stem[:8] for f in candidates[1:4])
-        print(
-            f"Note: {len(candidates)} sessions match '{session_prefix}';"
-            f" showing the most recent, {candidates[0].stem[:8]} (others: {others})",
-            file=sys.stderr,
-        )
+        warn_ambiguous("sessions", session_prefix, [f.stem[:8] for f in candidates])
 
     # Prompts-only doesn't need progress stubs (no chain traversal)
     include_stubs = not prompts_only
@@ -122,30 +116,28 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     matching_sessions = [s for s in sessions if s.session_id.startswith(session_prefix)]
     if not matching_sessions:
         if find_subagent_file(project_dir, session_prefix):
-            print(f"Error: '{session_prefix}' is a subagent ID, not a session", file=sys.stderr)
-            print(f"  Try: claude-history transcript {session_prefix}", file=sys.stderr)
-        elif any(project_dir.glob(f"{session_prefix}*.jsonl")):
-            print(f"Error: Session file matching '{session_prefix}' exists but has no readable records (empty or corrupt)", file=sys.stderr)
-        else:
-            print(f"Error: No session found with ID starting with '{session_prefix}' in any project", file=sys.stderr)
-        sys.exit(1)
+            die(
+                f"Error: '{session_prefix}' is a subagent ID, not a session",
+                f"  Try: claude-history transcript {session_prefix}",
+            )
+        if any(project_dir.glob(f"{session_prefix}*.jsonl")):
+            die(f"Error: Session file matching '{session_prefix}' exists but has no readable records (empty or corrupt)")
+        die(f"Error: No session found with ID starting with '{session_prefix}' in any project")
 
-    if len(matching_sessions) > 1:
-        others = ", ".join(s.session_id[:8] for s in matching_sessions[1:4])
-        print(
-            f"Note: {len(matching_sessions)} sessions match '{session_prefix}';"
-            f" showing {matching_sessions[0].session_id[:8]} (others: {others})",
-            file=sys.stderr,
+    # (multi-session files only: the file-level ambiguity note fired above)
+    if len(matching_sessions) > 1 and len(candidates) <= 1:
+        warn_ambiguous(
+            "sessions", session_prefix, [s.session_id[:8] for s in matching_sessions]
         )
     session = matching_sessions[0]
     session_id = session.session_id
 
-    # Get compactions for this session
-    compactions = get_compactions(records, session_id)
+    # Build chain indexes once; classification and rendering share them
+    indexes = build_record_indexes(records) if not prompts_only else None
+    compactions = get_compactions(records, session_id, indexes=indexes)
 
     if not compactions:
-        print("Error: Session has no context windows", file=sys.stderr)
-        sys.exit(1)
+        die("Error: Session has no context windows")
 
     # Prompts-only with multiple windows and no specific index: compact listing
     if prompts_only and len(compactions) >= 2 and window_idx is None:
@@ -179,11 +171,9 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     # Determine which windows to render
     if window_idx is not None:
         if window_idx < 0 or window_idx >= len(compactions):
-            print(
-                f"Error: Context window {window_idx} out of range (0-{len(compactions) - 1})",
-                file=sys.stderr,
+            die(
+                f"Error: Context window {window_idx} out of range (0-{len(compactions) - 1})"
             )
-            sys.exit(1)
         windows = [(window_idx, compactions[window_idx])]
     else:
         windows = list(enumerate(compactions))
@@ -204,8 +194,6 @@ def cmd_transcript(args: argparse.Namespace) -> None:
 
     if len(windows) > 1:
         print(f"Session: {cyan(session_id[:8])} ({len(windows)} context windows)\n")
-
-    indexes = build_record_indexes(records) if not prompts_only else None
 
     for wi, compaction in windows:
         user_prompts = [
@@ -247,16 +235,16 @@ def cmd_transcript(args: argparse.Namespace) -> None:
         else:
             print(f"Session: {cyan(session_id[:8])} | Context window {yellow(wi)}\n")
 
-        if not timeline:
-            print(dim("(no user prompts in this window; team protocol messages may exist — try --show-system)"))
-            print()
-
+        rendered_any = False
+        hidden_protocol = 0
         active_team = ""
         for item in timeline:
             if isinstance(item, TeammateMessage):
                 # Skip protocol messages unless --show-system
                 if item.body_type != "text" and not show_system:
+                    hidden_protocol += 1
                     continue
+                rendered_any = True
                 color_code = _TEAMMATE_COLORS.get(item.color or "", _CYAN)
                 label = f"{color_code}[{item.teammate_id}]{_RESET}"
                 ts_str = (
@@ -277,6 +265,7 @@ def cmd_transcript(args: argparse.Namespace) -> None:
                 continue
 
             # Regular user prompt
+            rendered_any = True
             prompt = item
             ts_str = (
                 dim(format_local(prompt.timestamp, "%Y-%m-%d %H:%M"))

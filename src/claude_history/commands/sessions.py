@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from claude_history.models import PAGE_SIZE
+from claude_history.models import PAGE_SIZE, die, paginate
 from claude_history.render import bold, cyan, dim, format_time, yellow
 from claude_history.resolve import parse_since, resolve_project_dir
 from claude_history.sessions import get_sessions_from_dir
@@ -65,21 +65,8 @@ def cmd_sessions(args: argparse.Namespace) -> None:
             print(f"No sessions since {local}.")
             return
 
-    # Paginate
-    if args.size is not None and args.size < 1:
-        print(f"Error: --size must be a positive integer (got {args.size})", file=sys.stderr)
-        sys.exit(1)
     page = args.page
-    page_size = args.size if args.size is not None else PAGE_SIZE
-    total_pages = (len(sessions) + page_size - 1) // page_size
-
-    if page < 1 or page > total_pages:
-        print(f"Error: Page {page} out of range (1-{total_pages})", file=sys.stderr)
-        sys.exit(1)
-
-    start_idx = (page - 1) * page_size
-    end_idx = min(start_idx + page_size, len(sessions))
-    page_sessions = sessions[start_idx:end_idx]
+    page_sessions, total_pages = paginate(sessions, page, args.size, PAGE_SIZE)
 
     print(f"Sessions (page {page}/{total_pages}):\n")
 

@@ -12,8 +12,8 @@ from claude_history.chain import (
     extract_ordered_content,
     get_full_response,
 )
-from claude_history.io import get_all_conversations, parse_jsonl_file
-from claude_history.models import ProgressStub, parse_timestamp
+from claude_history.io import get_all_conversations, newest_first, parse_jsonl_file
+from claude_history.models import ProgressStub, die, parse_timestamp
 from claude_history.render import cyan, dim, format_local, render_blocks
 from claude_history.resolve import (
     find_prompt_across_projects,
@@ -47,9 +47,7 @@ def _find_prompt_records(
     (a large project takes ~20s to parse; one file takes milliseconds).
     Returns (records_with_stubs, user_record) or ([], None) if not found.
     """
-    files = sorted(
-        project_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True
-    )
+    files = newest_first(project_dir.glob("*.jsonl"))
     if not files:
         return [], None
     try:
@@ -100,18 +98,18 @@ def cmd_response(args: argparse.Namespace) -> None:
             project_dir = alt_project
             records, user_record = _load_prompt_file(alt_file, target_uuid)
     if not user_record:
-        print(f"Error: No user prompt found with UUID starting with '{target_uuid}' in any project's session files", file=sys.stderr)
-        print(f"  Hint: If it is a session or agent ID, try: claude-history transcript {target_uuid}", file=sys.stderr)
-        print("  Note: messages inside subagent transcripts are not addressable by response;", file=sys.stderr)
-        print("        view the whole subagent with: claude-history transcript AGENT_ID", file=sys.stderr)
-        sys.exit(1)
+        die(
+            f"Error: No user prompt found with UUID starting with '{target_uuid}' in any project's session files",
+            f"  Hint: If it is a session or agent ID, try: claude-history transcript {target_uuid}",
+            "  Note: messages inside subagent transcripts are not addressable by response;",
+            "        view the whole subagent with: claude-history transcript AGENT_ID",
+        )
 
     # Get full response chain
     chain = get_full_response(records, user_record["uuid"])
 
     if not chain:
-        print(f"Error: No response found for prompt '{target_uuid}'", file=sys.stderr)
-        sys.exit(1)
+        die(f"Error: No response found for prompt '{target_uuid}'")
 
     # Get prompt timestamp for header
     dt = parse_timestamp(user_record.get("timestamp"))

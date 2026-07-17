@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 
 from claude_history.models import (
     DT_MIN,
@@ -25,41 +25,58 @@ from claude_history.models import (
 )
 
 
-def _has_assistant_descendant(
-    uuid: str, children_map: dict[str, list[Record]]
-) -> bool:
-    """True if an assistant record is reachable from uuid without crossing
-    another user text prompt.
+def _iter_turn_records(
+    children_map: dict[str, list[Record]], start_uuid: str
+) -> Iterator[Record]:
+    """Yield every record reachable from start_uuid without crossing another
+    user text prompt (the next turn).
 
-    Responses no longer hang directly off the prompt: current Claude Code
-    versions insert attachment/mode/etc. records between the prompt and the
-    first assistant record, so classification must walk the chain.
+    Responses no longer hang directly off the prompt: current clients
+    (observed v2.1.156+) insert attachment/mode/etc. records between the
+    prompt and the first assistant record, and older clients bridge parallel
+    tool_use and Task/Skill chains through progress stubs — this traversal
+    walks through all of them and explores parallel branches fully.
     """
-    queue = [uuid]
-    seen = {uuid}
+    queue = [start_uuid]
+    visited = {start_uuid}
     while queue:
         for child in children_map.get(queue.pop(), []):
             if isinstance(child, ProgressStub):
                 child_uuid = child.uuid
             else:
-                if child.get("type") == "assistant":
-                    return True
                 if is_user_text_prompt(child):
                     continue  # next turn — don't cross
                 child_uuid = child.get("uuid")
-            if child_uuid and child_uuid not in seen:
-                seen.add(child_uuid)
-                queue.append(child_uuid)
-    return False
+            if not child_uuid or child_uuid in visited:
+                continue
+            visited.add(child_uuid)
+            queue.append(child_uuid)
+            yield child
 
 
-def extract_user_prompts(records: list[Record]) -> list[Prompt]:
-    """Extract user prompts from conversation records."""
+def _has_assistant_descendant(
+    uuid: str, children_map: dict[str, list[Record]]
+) -> bool:
+    """True if an assistant record is reachable within the prompt's turn."""
+    return any(
+        not isinstance(r, ProgressStub) and r.get("type") == "assistant"
+        for r in _iter_turn_records(children_map, uuid)
+    )
+
+
+def extract_user_prompts(
+    records: list[Record], indexes: RecordIndexes | None = None
+) -> list[Prompt]:
+    """Extract user prompts from conversation records.
+
+    Pass pre-built indexes to avoid an extra O(N) index build when the
+    caller already has them (transcript, search).
+    """
     prompts: list[Prompt] = []
     seen_uuids: set[str] = set()
 
     # User-typed prompts have a reachable assistant response
-    children_map, _ = build_record_indexes(records)
+    children_map, _ = indexes if indexes else build_record_indexes(records)
 
     for record in iter_user_records(records):
         # Skip compaction summaries (system-generated context summaries)
@@ -209,39 +226,20 @@ def get_full_response(
 ) -> list[dict]:
     """Get all assistant records in the response chain for a prompt.
 
-    Collects every assistant record reachable from the prompt without
-    crossing another user text prompt (the next turn), then orders them
-    by timestamp. Breadth-first descent traverses the bridge records that
-    various client versions interpose — attachment/mode/etc. metadata
-    records (v2.1.90+), progress stubs bridging parallel tool_use and
-    Task/Skill chains (≤v2.1.8x) — and explores parallel branches fully,
-    so a dead-end branch can no longer truncate the turn.
+    Collects every assistant record within the prompt's turn (see
+    _iter_turn_records), ordered by timestamp so parallel branches and a
+    dead-end branch cannot truncate the turn.
     """
     if indexes:
         children_map, _record_map = indexes
     else:
         children_map, _record_map = build_record_indexes(records)
 
-    chain: list[dict] = []
-    queue = [prompt_uuid]
-    visited = {prompt_uuid}
-    while queue:
-        for child in children_map.get(queue.pop(), []):
-            if isinstance(child, ProgressStub):
-                child_uuid = child.uuid
-                is_assistant = False
-            else:
-                if is_user_text_prompt(child):
-                    continue  # next turn — don't cross
-                child_uuid = child.get("uuid")
-                is_assistant = child.get("type") == "assistant"
-            if not child_uuid or child_uuid in visited:
-                continue
-            visited.add(child_uuid)
-            queue.append(child_uuid)
-            if is_assistant:
-                chain.append(child)
-
+    chain = [
+        r
+        for r in _iter_turn_records(children_map, prompt_uuid)
+        if not isinstance(r, ProgressStub) and r.get("type") == "assistant"
+    ]
     chain.sort(key=lambda r: parse_timestamp(r.get("timestamp")) or DT_MIN)
     return chain
 

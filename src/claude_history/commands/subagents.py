@@ -6,7 +6,8 @@ import argparse
 import sys
 
 from claude_history.agents import extract_subagent_metadata, get_subagents
-from claude_history.io import iter_subagent_files, parse_subagent_file
+from claude_history.io import agent_id_from_path, iter_subagent_files, parse_subagent_file
+from claude_history.models import die, paginate, warn_ambiguous
 from claude_history.render import (
     bold,
     cyan,
@@ -38,28 +39,21 @@ def _subagent_detail(project_dir, agent_id: str) -> None:
     """
     matches = [
         p for p in iter_subagent_files(project_dir)
-        if p.stem.replace("agent-", "").startswith(agent_id)
+        if agent_id_from_path(p).startswith(agent_id)
     ]
     agent_file = matches[0] if matches else None
     if len(matches) > 1:
-        others = ", ".join(p.stem.replace("agent-", "") for p in matches[1:4])
-        print(
-            f"Note: {len(matches)} subagents match '{agent_id}';"
-            f" showing {matches[0].stem.replace('agent-', '')} (others: {others})",
-            file=sys.stderr,
-        )
+        warn_ambiguous("subagents", agent_id, [agent_id_from_path(p) for p in matches])
     if not agent_file:
         found = find_subagent_across_projects(agent_id, exclude_dir=project_dir)
         if found:
             note_cross_project(found[0])
             agent_file = found[1]
     if not agent_file:
-        print(f"Error: No subagent found with ID starting with '{agent_id}' in any project", file=sys.stderr)
-        sys.exit(1)
+        die(f"Error: No subagent found with ID starting with '{agent_id}' in any project")
     records = parse_subagent_file(agent_file)
     if not records:
-        print(f"Error: Subagent file has no readable records: {agent_file}", file=sys.stderr)
-        sys.exit(1)
+        die(f"Error: Subagent file has no readable records: {agent_file}")
     agent = extract_subagent_metadata(agent_file, records)
 
     # Header
@@ -143,17 +137,10 @@ def cmd_subagents(args: argparse.Namespace) -> None:
         return
 
     # Paginate (newest first, like sessions)
-    if args.size is not None and args.size < 1:
-        print(f"Error: --size must be a positive integer (got {args.size})", file=sys.stderr)
-        sys.exit(1)
     page = args.page
-    page_size = args.size if args.size is not None else SUBAGENT_PAGE_SIZE
-    total_pages = (len(subagents) + page_size - 1) // page_size
-    if page < 1 or page > total_pages:
-        print(f"Error: Page {page} out of range (1-{total_pages})", file=sys.stderr)
-        sys.exit(1)
-    start_idx = (page - 1) * page_size
-    page_agents = subagents[start_idx : start_idx + page_size]
+    page_agents, total_pages = paginate(
+        subagents, page, args.size, SUBAGENT_PAGE_SIZE
+    )
 
     # Listing view
     print(f"Subagent threads (page {page}/{total_pages}, {len(subagents)} total):\n")

@@ -12,8 +12,8 @@ from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from claude_history.io import iter_subagent_files
-from claude_history.models import CLAUDE_PROJECTS_DIR, parse_timestamp
+from claude_history.io import agent_id_from_path, iter_subagent_files, newest_first
+from claude_history.models import CLAUDE_PROJECTS_DIR, die, parse_timestamp
 
 
 def parse_since(value: str) -> datetime:
@@ -54,9 +54,10 @@ def parse_since(value: str) -> datetime:
     dt = parse_timestamp(value)
     if dt:
         return dt
-    print(f"Error: Cannot parse --since value '{value}'", file=sys.stderr)
-    print("  Examples: 3d, 1w, 24h, 30m, today, yesterday, 2024-01-15", file=sys.stderr)
-    sys.exit(1)
+    die(
+        f"Error: Cannot parse --since value '{value}'",
+        "  Examples: 3d, 1w, 24h, 30m, today, yesterday, 2024-01-15",
+    )
 
 
 def encode_path(path: str) -> str:
@@ -103,28 +104,28 @@ def resolve_project_dir(args: argparse.Namespace) -> Path:
         result = Path(args.project).expanduser()
         if result.exists():
             if not result.is_dir():
-                print(f"Error: --project is not a directory: {args.project}", file=sys.stderr)
-                sys.exit(1)
+                die(f"Error: --project is not a directory: {args.project}")
             return result.resolve()
         if "/" not in args.project:
             named = CLAUDE_PROJECTS_DIR / args.project
             if named.exists():
                 return named
-            print(f"Error: Project directory does not exist: {args.project}", file=sys.stderr)
-            print(f"  Tried: {result.absolute()} and {named}", file=sys.stderr)
-            sys.exit(1)
-        print(f"Error: Project directory does not exist: {args.project}", file=sys.stderr)
-        sys.exit(1)
+            die(
+                f"Error: Project directory does not exist: {args.project}",
+                f"  Tried: {result.absolute()} and {named}",
+            )
+        die(f"Error: Project directory does not exist: {args.project}")
 
     cwd = getattr(args, "cwd", None) or os.getcwd()
     result = get_project_dir(cwd)
     if result is not None and result.exists():
         return result
     encoded = encode_path(str(Path(cwd).resolve()))
-    print(f"Error: No project directory found for '{cwd}'", file=sys.stderr)
-    print(f"  Searched: ~/.claude/projects/{encoded}", file=sys.stderr)
-    print("  Hint: Use --project <path> to specify the project directory directly", file=sys.stderr)
-    sys.exit(1)
+    die(
+        f"Error: No project directory found for '{cwd}'",
+        f"  Searched: ~/.claude/projects/{encoded}",
+        "  Hint: list projects with: ls ~/.claude/projects/  then pass --project=NAME",
+    )
 
 
 def get_recent_session_ids(project_dir: Path, count: int = 10) -> list[str]:
@@ -192,12 +193,10 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
             # Session-like base with a bad window suffix — error now instead of
             # falling through to a misleading slug lookup. Slugs/custom titles
             # containing ':' still reach resolve_slug untouched.
-            print(
+            die(
                 f"Error: Invalid context window ':{idx}' in '{identifier}' — "
-                f"expected a non-negative integer (e.g. {base}:0)",
-                file=sys.stderr,
+                f"expected a non-negative integer (e.g. {base}:0)"
             )
-            sys.exit(1)
 
     if identifier == "latest":
         n = 0
@@ -206,24 +205,21 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
     elif identifier.startswith("prev-") and identifier[5:].isdigit():
         n = int(identifier[5:])
         if n < 1:
-            print("Error: prev-N requires N >= 1 (prev-1 = previous session).", file=sys.stderr)
-            sys.exit(1)
+            die("Error: prev-N requires N >= 1 (prev-1 = previous session).")
     else:
         # If it doesn't look like a hex UUID prefix, try slug resolution
         if not re.fullmatch(r"[0-9a-fA-F-]+", identifier):
             sid = resolve_slug(identifier, project_dir)
             if sid:
                 return (sid[:8], ctx_window)
-            print(f"Error: No session found with slug '{identifier}'", file=sys.stderr)
-            sys.exit(1)
+            die(f"Error: No session found with slug '{identifier}'")
         # Stored session IDs are lowercase hex
         return (identifier.lower(), ctx_window)
 
     session_ids = get_recent_session_ids(project_dir, count=n + 1)
     if len(session_ids) <= n:
         label = "latest" if n == 0 else f"prev-{n}"
-        print(f"Error: Only {len(session_ids)} sessions found, cannot resolve {label}.", file=sys.stderr)
-        sys.exit(1)
+        die(f"Error: Only {len(session_ids)} sessions found, cannot resolve {label}.")
     return (session_ids[n][:8], ctx_window)
 
 
@@ -258,9 +254,10 @@ def find_subagent_across_projects(
 
     Returns (project_dir, agent_file_path) or None.
     """
+    agent_id_prefix = agent_id_prefix.lower()  # stored IDs are lowercase hex
     for d in _iter_other_projects(exclude_dir):
         for path in iter_subagent_files(d):
-            if path.stem.replace("agent-", "").startswith(agent_id_prefix):
+            if agent_id_from_path(path).startswith(agent_id_prefix):
                 return (d, path)
     return None
 
@@ -277,14 +274,9 @@ def find_prompt_across_projects(
     """
     # Only top-level session files: that is all cmd_response can display,
     # and it skips the ~2x-larger set of subagent files.
-    candidates: list[tuple[float, Path]] = []
-    for d in _iter_other_projects(exclude_dir):
-        for f in d.glob("*.jsonl"):
-            try:
-                candidates.append((f.stat().st_mtime, f))
-            except OSError:
-                continue
-    candidates.sort(reverse=True)
+    candidates = newest_first(
+        f for d in _iter_other_projects(exclude_dir) for f in d.glob("*.jsonl")
+    )
 
     deadline = time.monotonic() + 30
     chunk_size = 200
@@ -297,7 +289,7 @@ def find_prompt_across_projects(
                 file=sys.stderr,
             )
             break
-        chunk = [str(f) for _, f in candidates[i : i + chunk_size]]
+        chunk = [str(f) for f in candidates[i : i + chunk_size]]
         try:
             result = subprocess.run(
                 ["grep", "-a", "-l", "-s", "-F", "-m", "1", "--", prompt_uuid, *chunk],

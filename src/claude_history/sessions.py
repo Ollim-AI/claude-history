@@ -47,7 +47,9 @@ def get_compact_boundaries(
     return sorted(boundaries, key=lambda x: x.timestamp or DT_MIN)
 
 
-def get_compactions(records: list[Record], session_id: str) -> list[CompactionWindow]:
+def get_compactions(
+    records: list[Record], session_id: str, indexes=None
+) -> list[CompactionWindow]:
     """Group prompts into context windows based on compaction boundaries.
 
     Detects both explicit boundaries (compact_boundary records) and implicit
@@ -81,7 +83,7 @@ def get_compactions(records: list[Record], session_id: str) -> list[CompactionWi
     boundary_times = sorted(all_boundary_times)
 
     # Get prompts for this session
-    prompts = extract_user_prompts(records)
+    prompts = extract_user_prompts(records, indexes=indexes)
     session_prompts = [p for p in prompts if p.session_id == session_id]
     session_prompts.sort(key=lambda x: x.timestamp or DT_MIN)
 
