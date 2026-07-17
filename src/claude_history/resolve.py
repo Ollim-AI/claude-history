@@ -153,7 +153,7 @@ def resolve_slug(name: str, project_dir: Path) -> str | None:
     for field in ["customTitle", "slug"]:
         needle = f'"{field}":"{name}"'
         result = subprocess.run(
-            ["grep", "-F", "-r", "-m", "1", "--include=*.jsonl",
+            ["grep", "-a", "-F", "-r", "-m", "1", "--include=*.jsonl",
              needle, str(project_dir)],
             capture_output=True, text=True, timeout=10,
         )
@@ -289,7 +289,7 @@ def find_prompt_across_projects(
         chunk = [str(f) for _, f in candidates[i : i + chunk_size]]
         try:
             result = subprocess.run(
-                ["grep", "-l", "-s", "-F", "-m", "1", "--", prompt_uuid, *chunk],
+                ["grep", "-a", "-l", "-s", "-F", "-m", "1", "--", prompt_uuid, *chunk],
                 capture_output=True, text=True, timeout=remaining,
             )
         except subprocess.TimeoutExpired:

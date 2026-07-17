@@ -79,10 +79,11 @@ def parse_jsonl_file(
     records = []
     skipped = 0
     try:
-        # Use grep -F -f - to pipe the pattern via stdin, avoiding Windows
-        # argument quoting issues with double quotes in patterns
+        # -F -f -: pattern via stdin avoids Windows argument quoting issues.
+        # -a: a single NUL byte otherwise makes grep declare the file binary
+        # and swallow every record in it.
         result = subprocess.run(
-            ["grep", "-F", "-v", "-f", "-", str(filepath)],
+            ["grep", "-a", "-F", "-v", "-f", "-", str(filepath)],
             input='"type":"progress"\n',
             capture_output=True,
             text=True,

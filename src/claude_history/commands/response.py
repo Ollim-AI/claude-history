@@ -54,7 +54,7 @@ def _find_prompt_records(
         return [], None
     try:
         result = subprocess.run(
-            ["grep", "-l", "-s", "-F", "-m", "1", "--", target_uuid,
+            ["grep", "-a", "-l", "-s", "-F", "-m", "1", "--", target_uuid,
              *(str(f) for f in files)],
             capture_output=True, text=True,
         )

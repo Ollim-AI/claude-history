@@ -55,7 +55,7 @@ def prefilter_files(
     def _check_file(f: Path) -> Path | None:
         try:
             p1 = subprocess.Popen(
-                ["grep", "-F", "-v", "-f", "-", str(f)],
+                ["grep", "-a", "-F", "-v", "-f", "-", str(f)],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
             )
@@ -63,7 +63,7 @@ def prefilter_files(
                 p1.stdin.write(b'"type":"progress"\n')
                 p1.stdin.close()
                 p2 = subprocess.Popen(
-                    ["grep", "-F", "-q", *case_flag, "--", query],
+                    ["grep", "-a", "-F", "-q", *case_flag, "--", query],
                     stdin=p1.stdout,
                     stdout=subprocess.PIPE,
                 )

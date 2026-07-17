@@ -294,3 +294,18 @@ class TestDegenerateLines:
                          "message": {"content": "hi"}})
         records = self._parse(tmp_path, [bad, good])
         assert [r["uuid"] for r in records] == ["u2"]
+
+
+class TestNulByteFile:
+    def test_records_survive_nul_byte_in_file(self, tmp_path: Path, capsys) -> None:
+        # BSD grep declares a file with a NUL byte "binary" and replaces its
+        # output with one junk line, silently erasing the whole session.
+        good1 = _compact({"type": "user", "uuid": "u1", "sessionId": "s",
+                          "message": {"content": "before"}})
+        good2 = _compact({"type": "user", "uuid": "u2", "sessionId": "s",
+                          "message": {"content": "after"}})
+        f = tmp_path / "s.jsonl"
+        f.write_bytes(good1.encode() + b"\n" + b'{"bad": "\x00"}\n' + good2.encode() + b"\n")
+        records = parse_jsonl_file(f, include_progress_stubs=False)
+        uuids = [r["uuid"] for r in records if isinstance(r, dict) and "uuid" in r]
+        assert uuids == ["u1", "u2"]
