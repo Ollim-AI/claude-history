@@ -378,7 +378,9 @@ class TestFindPromptAcrossProjects:
 
         result = find_prompt_across_projects("deadbeef-1234", exclude_dir=proj_a)
         assert result is not None
-        assert result.name == "-home-user-project-b"
+        project_dir, session_file = result
+        assert project_dir.name == "-home-user-project-b"
+        assert session_file.name == "session.jsonl"
 
     def test_returns_none_when_not_found(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         projects = tmp_path / "projects"
@@ -490,7 +492,10 @@ class TestFindPromptAcrossProjectsExclude:
             (d / "s1.jsonl").write_text('{"uuid":"promptuuid42"}\n')
         excluded = projects / "-proj-a"
         found = find_prompt_across_projects("promptuuid42", exclude_dir=excluded)
-        assert found == projects / "-proj-b"
+        assert found is not None
+        project_dir, session_file = found
+        assert project_dir == projects / "-proj-b"
+        assert session_file == projects / "-proj-b" / "s1.jsonl"
 
     def test_only_excluded_match_returns_none(
         self, tmp_path: Path, monkeypatch

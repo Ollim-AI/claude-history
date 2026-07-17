@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -217,29 +218,55 @@ def find_subagent_across_projects(
 
 def find_prompt_across_projects(
     prompt_uuid: str, exclude_dir: Path | None = None
-) -> Path | None:
-    """Grep all project dirs for a file containing the prompt UUID.
+) -> tuple[Path, Path] | None:
+    """Grep project dirs for a session file containing the prompt UUID.
 
-    Returns project_dir or None.
+    Searches newest-first with early exit, so hits (usually in recently
+    active projects) return fast instead of scanning everything. A miss
+    scans all projects within a 30s budget; hitting the budget prints a
+    note so truncation is never silent. Returns (project_dir, file) or None.
     """
-    try:
-        result = subprocess.run(
-            ["grep", "-r", "-l", "-m", "1", "--include=*.jsonl",
-             prompt_uuid, str(CLAUDE_PROJECTS_DIR)],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    # Each line is a matching file under CLAUDE_PROJECTS_DIR/<project>/ —
-    # walk up to the project dir, skipping hits inside exclude_dir
-    for line in result.stdout.strip().splitlines():
-        for parent in Path(line).parents:
-            if parent.parent == CLAUDE_PROJECTS_DIR:
-                if not (exclude_dir and parent == exclude_dir):
-                    return parent
-                break
+    # Only top-level session files: that is all cmd_response can display,
+    # and it skips the ~2x-larger set of subagent files.
+    candidates: list[tuple[float, Path]] = []
+    for d in _iter_other_projects(exclude_dir):
+        for f in d.glob("*.jsonl"):
+            try:
+                candidates.append((f.stat().st_mtime, f))
+            except OSError:
+                continue
+    candidates.sort(reverse=True)
+
+    deadline = time.monotonic() + 30
+    chunk_size = 200
+    for i in range(0, len(candidates), chunk_size):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            print(
+                f"Note: UUID search stopped after 30s ({i}/{len(candidates)}"
+                " files searched); use --project to target a specific project",
+                file=sys.stderr,
+            )
+            break
+        chunk = [str(f) for _, f in candidates[i : i + chunk_size]]
+        try:
+            result = subprocess.run(
+                ["grep", "-l", "-s", "-F", "-m", "1", "--", prompt_uuid, *chunk],
+                capture_output=True, text=True, timeout=remaining,
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        except OSError as e:
+            print(
+                f"Warning: cross-project UUID search skipped (grep failed: {e})",
+                file=sys.stderr,
+            )
+            break
+        if result.stdout.strip():
+            # Output order follows arg order (newest first); paths were built
+            # as <project>/<session>.jsonl, so parent is the project dir
+            hit = Path(result.stdout.strip().splitlines()[0])
+            return (hit.parent, hit)
     return None
 
 
