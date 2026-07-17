@@ -257,3 +257,21 @@ class TestPrefilterFilesMtime:
         result = prefilter_files(tmp_path, "findme", since_dt=since)
         assert new_agent in result
         assert old_agent not in result
+
+
+class TestPromptsTargetIncludesSubagents:
+    def test_spawn_prompt_matches_with_prompts_target(self, tmp_path: Path) -> None:
+        # -T prompts silently excluded subagent files, so the same match
+        # appeared or vanished depending on unrelated extra targets.
+        agent = tmp_path / "s1" / "subagents" / "agent-abc123f.jsonl"
+        agent.parent.mkdir(parents=True)
+        agent.write_text(json.dumps({
+            "type": "user", "uuid": "u1", "sessionId": "s1",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "message": {"role": "user", "content": "hunt the wumpus"},
+        }) + "\n")
+        matches = search_subagent_files(
+            [agent], "wumpus", False, {SearchTarget.PROMPTS}
+        )
+        assert len(matches) == 1
+        assert matches[0].type == "subagent"

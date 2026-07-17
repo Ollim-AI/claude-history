@@ -86,8 +86,7 @@ def cmd_search(args: argparse.Namespace) -> None:
                     r["_source_file"] = f.name
             records.extend(file_records)
         matches = search_records(records, query, case_sensitive, targets)
-    # Only search subagents when targets go beyond prompts-only
-    if subagent_files and targets != {SearchTarget.PROMPTS}:
+    if subagent_files:
         matches.extend(
             search_subagent_files(subagent_files, query, case_sensitive, targets)
         )
