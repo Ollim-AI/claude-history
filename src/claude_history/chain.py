@@ -18,6 +18,7 @@ from claude_history.models import (
     ToolUseContent,
     extract_content_text,
     extract_hook_contexts,
+    is_teammate_message_content,
     iter_user_records,
     parse_task_notification,
     parse_timestamp,
@@ -77,9 +78,9 @@ def extract_user_prompts(records: list[Record]) -> list[Prompt]:
         # string wrappers). Other string-content records (bash-input,
         # local-command-caveat, plain text prompts) are legitimate and handled
         # by downstream classification.
-        if isinstance(content, str) and content.startswith(
-            ("<teammate-message", "<task-notification>")
-        ):
+        if is_teammate_message_content(content):
+            continue
+        if isinstance(content, str) and content.startswith("<task-notification>"):
             continue
 
         prompt_text = extract_content_text(content)
@@ -143,8 +144,8 @@ def is_user_text_prompt(record: dict) -> bool:
 
     content = record.get("message", {}).get("content", [])
 
-    # Teammate-message records have string content starting with <teammate-message
-    if isinstance(content, str) and content.startswith("<teammate-message"):
+    # Teammate-message wrapper records (possibly prefixed by client text)
+    if is_teammate_message_content(content):
         return False
 
     # Plain string content is an ordinary typed prompt (the dominant string

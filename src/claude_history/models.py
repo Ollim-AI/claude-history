@@ -330,6 +330,16 @@ def extract_content_text(content: str | list) -> str:
     return " ".join(text_parts)
 
 
+def is_teammate_message_content(content: object) -> bool:
+    """True if a user record's content wraps a <teammate-message>.
+
+    Newer clients prefix the wrapper ("Another Claude session sent a
+    message:\\n<teammate-message ...>"), so prefix checks miss it; use the
+    same regex parse_teammate_message matches with.
+    """
+    return isinstance(content, str) and _TEAMMATE_MSG_RE.search(content) is not None
+
+
 def parse_teammate_message(record: dict) -> TeammateMessage | None:
     """Parse a teammate-message user record into a TeammateMessage."""
     content = record.get("message", {}).get("content", "")

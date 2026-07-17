@@ -134,3 +134,43 @@ class TestIsUserTextPrompt:
             },
         }
         assert is_user_text_prompt(record) is False
+
+
+class TestPrefixedTeammateWrapper:
+    """Newer clients prefix the wrapper: 'Another Claude session sent a
+    message:\\n<teammate-message ...>'. Detection must not rely on startswith,
+    or the record renders twice (raw [user] block + parsed teammate block)."""
+
+    def _record(self) -> dict:
+        content = (
+            "Another Claude session sent a message:\n"
+            '<teammate-message teammate_id="lead" color="blue">hello team</teammate-message>\n\n'
+            "This came from another Claude session."
+        )
+        return {
+            "type": "user",
+            "uuid": "tm1",
+            "parentUuid": None,
+            "sessionId": "s1",
+            "timestamp": "2026-01-01T10:00:00Z",
+            "message": {"role": "user", "content": content},
+        }
+
+    def test_not_extracted_as_user_prompt(self) -> None:
+        from claude_history.chain import extract_user_prompts
+
+        prompts = extract_user_prompts([self._record()])
+        assert prompts == []
+
+    def test_not_a_user_text_prompt(self) -> None:
+        from claude_history.chain import is_user_text_prompt
+
+        assert not is_user_text_prompt(self._record())
+
+    def test_still_parses_as_teammate_message(self) -> None:
+        from claude_history.models import parse_teammate_message
+
+        tm = parse_teammate_message(self._record())
+        assert tm is not None
+        assert tm.teammate_id == "lead"
+        assert tm.body == "hello team"
