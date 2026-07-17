@@ -538,3 +538,26 @@ class TestSinceConsistency:
     def test_invalid_calendar_date_rejected(self) -> None:
         with pytest.raises(SystemExit):
             parse_since("2024-13-45")
+
+
+class TestSearchQueryValidation:
+    def _args(self, **kw) -> argparse.Namespace:
+        base = dict(target="prompts", prompts_only=False, responses_only=False,
+                    query="x", case_sensitive=False, project=None, cwd=None,
+                    timestamps=False, since=None, limit=50)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_empty_query_rejected(self, tmp_path: Path, capsys) -> None:
+        from claude_history.cli import cmd_search
+
+        with pytest.raises(SystemExit):
+            cmd_search(self._args(query="  ", project=str(tmp_path)))
+        assert "must not be empty" in capsys.readouterr().err
+
+    def test_unknown_target_has_error_prefix(self, capsys) -> None:
+        from claude_history.cli import _parse_targets
+
+        with pytest.raises(SystemExit):
+            _parse_targets(self._args(target="Tools"))
+        assert "Error: Unknown target" in capsys.readouterr().err

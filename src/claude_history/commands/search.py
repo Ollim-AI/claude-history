@@ -32,7 +32,7 @@ def _parse_targets(args: argparse.Namespace) -> set[SearchTarget]:
         for name in raw:
             if name not in ALL_SEARCH_TARGETS:
                 valid = ", ".join(sorted(ALL_SEARCH_TARGETS))
-                print(f'Unknown target "{name}". Valid targets: {valid}', file=sys.stderr)
+                print(f'Error: Unknown target "{name}". Valid targets: {valid}', file=sys.stderr)
                 sys.exit(1)
             targets.add(SearchTarget(name))
         return targets
@@ -54,6 +54,9 @@ def cmd_search(args: argparse.Namespace) -> None:
     project_dir = resolve_project_dir(args)
 
     query = args.query
+    if not query.strip():
+        print("Error: search query must not be empty", file=sys.stderr)
+        sys.exit(1)
     case_sensitive = args.case_sensitive
     targets = _parse_targets(args)
 
