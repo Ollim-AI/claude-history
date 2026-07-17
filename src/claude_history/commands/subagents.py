@@ -22,6 +22,7 @@ from claude_history.resolve import (
     note_cross_project,
     parse_since,
     resolve_project_dir,
+    resolve_session_ref,
 )
 
 # Agent-heavy projects hold thousands of subagents; an unpaged listing
@@ -118,8 +119,9 @@ def cmd_subagents(args: argparse.Namespace) -> None:
     # Apply filters
     session_filter = getattr(args, "session", None)
     if session_filter:
-        session_filter = session_filter.lower()
-        subagents = [a for a in subagents if a.session_id.startswith(session_filter)]
+        # Resolve latest/prev-N/slug references the same way transcript does
+        session_prefix, _ = resolve_session_ref(session_filter, project_dir)
+        subagents = [a for a in subagents if a.session_id.startswith(session_prefix)]
     since = getattr(args, "since", None)
     if since:
         since_dt = parse_since(since)

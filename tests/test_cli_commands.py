@@ -349,3 +349,73 @@ class TestSubagentListingPagination:
         cmd_subagents(self._args(project, page=2))
         out = capsys.readouterr().out
         assert out.count("(session:") == 3
+
+
+class TestLocalSessionOutranksForeignSubagent:
+    def test_prefix_matching_local_session_skips_cross_project_scan(
+        self, tmp_path: Path, capsys, monkeypatch
+    ) -> None:
+        # A subagent in ANOTHER project sharing the prefix must not shadow a
+        # local session.
+        projects = tmp_path / "projects"
+        local = projects / "-local"
+        local.mkdir(parents=True)
+        _write_session(local, "abc12345-1111-2222-3333-444455556666", [
+            {"type": "user", "uuid": "u1", "parentUuid": None,
+             "sessionId": "abc12345-1111-2222-3333-444455556666",
+             "timestamp": "2026-01-01T10:00:00Z",
+             "message": {"content": [{"type": "text", "text": "local prompt"}]}},
+            {"type": "assistant", "uuid": "a1", "parentUuid": "u1",
+             "sessionId": "abc12345-1111-2222-3333-444455556666",
+             "timestamp": "2026-01-01T10:00:01Z",
+             "message": {"content": [{"type": "text", "text": "local answer"}]}},
+        ])
+        foreign = (projects / "-other" / "99999999-0000-0000-0000-000000000000"
+                   / "subagents" / "agent-abc12345678901234.jsonl")
+        foreign.parent.mkdir(parents=True)
+        foreign.write_text(json.dumps({
+            "type": "user", "uuid": "fu1",
+            "sessionId": "99999999-0000-0000-0000-000000000000",
+            "timestamp": "2026-01-01T10:00:00Z",
+            "message": {"role": "user", "content": "FOREIGN AGENT"},
+        }) + "\n")
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", projects)
+        from claude_history.cli import cmd_transcript
+
+        args = argparse.Namespace(
+            project=str(local), cwd=None, identifier="abc12345",
+            prompts_only=False, show_thinking=False, hide_tools=False,
+            show_tool_results=False, hide_tool_results=False,
+            show_hooks=False, show_system=False,
+        )
+        cmd_transcript(args)
+        out = capsys.readouterr().out
+        assert "local prompt" in out
+        assert "FOREIGN AGENT" not in out
+
+
+class TestSubagentSessionRefFilter:
+    def test_session_filter_resolves_latest(self, tmp_path: Path, capsys) -> None:
+        session = "abc12345-1111-2222-3333-444455556666"
+        # Compact JSON: latest/prev resolution greps '"sessionId":"..."'
+        (tmp_path / f"{session}.jsonl").write_text(json.dumps(
+            {"type": "user", "uuid": "u1", "parentUuid": None,
+             "sessionId": session, "timestamp": "2026-01-01T10:00:00Z",
+             "message": {"content": [{"type": "text", "text": "hi"}]}},
+            separators=(",", ":"),
+        ) + "\n")
+        agent = tmp_path / session / "subagents" / "agent-def456a.jsonl"
+        agent.parent.mkdir(parents=True)
+        agent.write_text(json.dumps({
+            "type": "user", "uuid": "au1", "sessionId": session,
+            "timestamp": "2026-01-01T10:00:00Z",
+            "message": {"role": "user", "content": "subtask"},
+        }) + "\n")
+        from claude_history.cli import cmd_subagents
+
+        args = argparse.Namespace(project=str(tmp_path), cwd=None,
+                                  agent_id=None, session="latest", since=None,
+                                  page=1, size=None)
+        cmd_subagents(args)
+        out = capsys.readouterr().out
+        assert "def456a" in out

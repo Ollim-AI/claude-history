@@ -65,7 +65,9 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     raw_id = args.identifier.split(":")[0].lower()
     if re.fullmatch(r'[0-9a-f]+', raw_id) and not raw_id.startswith("prev"):
         agent_file = find_subagent_file(project_dir, raw_id)
-        if not agent_file:
+        if not agent_file and not any(project_dir.glob(f"{raw_id}*.jsonl")):
+            # Only look for foreign subagents when no LOCAL session matches
+            # the prefix — a subagent in another project must not shadow it
             found = find_subagent_across_projects(raw_id, exclude_dir=project_dir)
             if found:
                 project_dir, agent_file = found
