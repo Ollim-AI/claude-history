@@ -92,9 +92,11 @@ def get_project_dir(cwd: str | None = None) -> Path | None:
 def resolve_project_dir(args: argparse.Namespace) -> Path:
     """Resolve project directory from args (--project or --cwd). Exits on failure."""
     if hasattr(args, "project") and args.project:
-        result = Path(args.project)
+        # Absolute path: encoded project names start with '-', and a relative
+        # dash-leading path downstream reads as an option cluster to grep
+        result = Path(args.project).expanduser()
         if result.exists():
-            return result
+            return result.resolve()
         if "/" not in args.project:
             named = CLAUDE_PROJECTS_DIR / args.project
             if named.exists():

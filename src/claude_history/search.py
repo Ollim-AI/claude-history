@@ -55,7 +55,7 @@ def prefilter_files(
     def _check_file(f: Path) -> Path | None:
         try:
             p1 = subprocess.Popen(
-                ["grep", "-a", "-F", "-v", "-f", "-", str(f)],
+                ["grep", "-a", "-F", "-v", "-f", "-", "--", str(f)],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
             )

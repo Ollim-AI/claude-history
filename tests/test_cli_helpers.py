@@ -505,3 +505,18 @@ class TestFindPromptAcrossProjectsExclude:
         d.mkdir()
         (d / "s1.jsonl").write_text('{"uuid":"promptuuid42"}\n')
         assert find_prompt_across_projects("promptuuid42", exclude_dir=d) is None
+
+
+class TestDashLeadingRelativeProject:
+    def test_relative_dash_path_resolved_absolute(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # A relative dash-leading path reached grep as an option cluster and
+        # silently produced zero records for a project full of sessions.
+        d = tmp_path / "-Users-me-repo"
+        d.mkdir()
+        monkeypatch.chdir(tmp_path)
+        args = argparse.Namespace(project="-Users-me-repo", cwd=None)
+        result = resolve_project_dir(args)
+        assert result.is_absolute()
+        assert result == d.resolve()

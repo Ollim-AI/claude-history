@@ -83,13 +83,17 @@ def parse_jsonl_file(
         # -a: a single NUL byte otherwise makes grep declare the file binary
         # and swallow every record in it.
         result = subprocess.run(
-            ["grep", "-a", "-F", "-v", "-f", "-", str(filepath)],
+            ["grep", "-a", "-F", "-v", "-f", "-", "--", str(filepath)],
             input='"type":"progress"\n',
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
         )
+        if result.returncode > 1:
+            # 0 = matches, 1 = no lines left; >1 = grep failed (bad args,
+            # unreadable file) — fall back to the Python parser
+            raise subprocess.SubprocessError(f"grep exited {result.returncode}")
         for line in result.stdout.split("\n"):
             if line.strip():
                 record = _parse_record_line(line)
