@@ -55,7 +55,6 @@ claude-history <command> [options]
 | `sessions` | List recent sessions with prompt and context window counts |
 | `transcript SESSION` | Full conversation: prompts + responses + tool calls |
 | `transcript SESSION:N` | Transcript for a specific context window |
-| `transcript SESSION --prompts-only` | View user prompts only |
 | `transcript AGENT_ID` | Full subagent transcript (accepts hex agent ID) |
 | `response UUID` | Read Claude's response to a prompt |
 | `search QUERY -T targets` | Search specific content types (comma-separated: prompts,responses,tools,tool-results,thinking,hooks) |
@@ -96,12 +95,15 @@ The `transcript` and `response` commands support these flags. `transcript` trunc
 | Option | Description |
 |--------|-------------|
 | `-T`, `--target TARGETS` | Content types to search (comma-separated: `prompts,responses,tools,tool-results,thinking,hooks`) |
-| `--page N` | Page number for sessions listing |
-| `--size N` | Sessions per page (default: 10) |
-| `--since WHEN` | Filter by time (e.g., `3d`, `1w`, `24h`, `today`, `2024-01-15`) |
-| `-t`, `--timestamps` | Show ISO timestamps instead of relative times |
+| `-r` / `--case-sensitive` | Search assistant output only / match case exactly |
+| `--limit N` | Max search matches shown, newest first (default: 50) |
+| `--page N` / `--size N` | Paginate `sessions` (10/page) and `subagents` (20/page) |
+| `--since WHEN` | Time filter for `sessions`/`search`/`subagents` (e.g., `3d`, `1w`, `24h`, `today`, `2024-01-15`) |
+| `-t`, `--timestamps` | ISO timestamps instead of relative times (`sessions`, `search`) |
 | `--cwd PATH` | Look up project for a different directory |
-| `--project PATH` | Directly specify project directory in `~/.claude/projects/` |
+| `--project NAME` | Project directory name or path in `~/.claude/projects/` (names start with `-`, so use `--project=NAME`) |
+
+Colors auto-disable when output is piped; `NO_COLOR`/`FORCE_COLOR` are respected. Errors go to stderr with exit 1.
 
 ### Example Workflow
 
@@ -115,9 +117,7 @@ claude-history transcript 9aaedc03:0 --show-thinking
 # Two sessions ago, text only
 claude-history transcript prev-2 --hide-tools
 
-# List subagents from a specific session
+# Subagents of a session, then one subagent's transcript
 claude-history subagents --session 9aaedc03
-
-# Read a subagent's full transcript
 claude-history transcript a63fc3a --show-thinking
 ```

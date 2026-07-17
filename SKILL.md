@@ -18,7 +18,7 @@ Key insight: **listing and searching are navigation — reading transcripts is t
 
 | What you know | Command | Purpose |
 |--------------|---------|---------|
-| A topic or keyword | `search QUERY` | Find sessions mentioning the topic |
+| A topic or keyword | `search QUERY -T prompts,responses` | Find sessions mentioning the topic |
 | Rough timeframe | `sessions --since 3d` | Filter sessions by time range |
 | "What did we just do?" | `transcript prev --prompts-only` | See user prompts from last session |
 | Need current session context | `transcript latest` | Read the most recently active session |
@@ -39,8 +39,6 @@ claude-history transcript SESSION_ID
 claude-history transcript SESSION_ID --show-thinking   # see reasoning
 claude-history transcript SESSION_ID:0 --show-thinking  # specific context window
 ```
-
-`--prompts-only` is useful for orientation, but always read the full transcript.
 
 For many matches, read the 3-5 most relevant first (most recent, closest match), then decide if more are needed.
 
@@ -80,6 +78,8 @@ Summarize concrete changes made — not what was attempted or discussed.
 | `search QUERY -T hooks` | Search hook errors and context |
 | `search -p QUERY` | Shortcut for `-T prompts` |
 
+Match lines read `UUID | s:SESSION | time | [type]` — pass the `s:` value to `transcript`, the UUID to `response`. Display caps at 50 newest matches (`--limit N` raises it).
+
 ### Display Flags
 
 | Flag | Effect |
@@ -94,7 +94,7 @@ Summarize concrete changes made — not what was attempted or discussed.
 | Command | Description |
 |---------|-------------|
 | `response UUID` | Claude's response with full tool results (drill-down from transcript) |
-| `sessions --page N --size N` | Paginate sessions (default: 10 per page) |
+| `sessions --page N --size N` | Paginate sessions (10/page); `subagents` pages the same way (20/page) |
 
 ### Session References
 

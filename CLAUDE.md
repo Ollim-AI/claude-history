@@ -19,11 +19,11 @@ Before committing, every change goes through these gates:
 
 ## Codebase notes
 
-- `models.py` — Leaf module with zero internal imports; all other modules depend on it. ANSI codes are module-level constants shared via re-export.
-- `io.py` — Shells out to `grep -F -v` to skip progress records (~99% of file size) before JSON parsing; Python fallback exists if grep unavailable.
-- `chain.py` — `get_full_response` recovers from dead-end chains by following ProgressStub siblings/children (needed for parallel agent tool_use chains in v2.1.76+).
-- `sessions.py` — `get_sessions_from_dir` streams files one-at-a-time via executor.map to stay O(largest_file) memory, unlike `get_sessions` which needs all records in memory.
-- `render.py` — `render_blocks` is the single display engine for both transcript and response commands; all output filtering (thinking/tools/hooks) is flag-driven, not caller-driven. Tool results are shown by default (truncated to ~20 lines for success, full for errors); `full_detail=True` removes truncation and shows full tool inputs.
-- `agents.py` — Subagent files are parsed fully (no progress filtering) because they're small; uses lazy imports from chain/render to avoid circular deps. `search_subagent_files` must search record-by-record (not concatenate) to avoid OOM.
-- `cli.py:prefilter_files` — `since_dt` param filters by mtime before spawning grep; without it, 3000+ subagent files spawn 6000+ subprocesses.
-- `cli.py` — `cmd_response` does a two-pass file load: first without progress stubs to find the UUID's file, then reloads just that file with stubs for chain traversal.
+- `models.py` — Leaf module with zero internal imports; all other modules depend on it. ANSI constants bake at import (off when piped/NO_COLOR, on for tty/FORCE_COLOR); `die()` owns errors-to-stderr; shared `paginate`/`warn_ambiguous` live here.
+- `io.py` — Single-pass in-process JSONL parse (a grep fast path was removed after measuring 8x slower); progress records identified by the line's first `"type"` field, not bare substring. `iter_subagent_files` covers flat and workflows layouts.
+- `chain.py` — `_iter_turn_records` BFS collects a whole turn through bridge records (attachments v2.1.156+, progress stubs ≤v2.1.8x); `get_full_response` sorts collected assistants by timestamp. Notification/agent maps read both string-content (legacy) and toolUseResult/array-content (current) formats.
+- `sessions.py` — `get_sessions_from_dir` streams files one-at-a-time via executor.map to stay O(largest_file) memory, unlike `get_sessions` which needs all records in memory. Promptless sessions get one synthetic window so transcript never contradicts the listing.
+- `render.py` — `render_blocks` is the single display engine for transcript and response; filtering is flag-driven, not caller-driven. Success tool results clip at 20 lines / 4000 chars (errors full); base64 image payloads always elided; `full_detail=True` lifts clipping.
+- `agents.py` — Subagent files are parsed fully (small); lazy imports from chain/render avoid circular deps. `search_subagent_files` searches record-by-record (not concatenated) to avoid OOM. Hook display normalizes attachment-era hook records to the legacy shape.
+- `search.py:prefilter_files` — `since_dt` filters by mtime before spawning grep; without it, 7000+ subagent files spawn 14000+ subprocesses.
+- `cli.py` — argparse wiring + dispatch only; handlers live in `commands/` (one module per subcommand). `cmd_response` grep-locates the prompt's file newest-first and parses only that file.
