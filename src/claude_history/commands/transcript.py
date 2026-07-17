@@ -218,6 +218,10 @@ def cmd_transcript(args: argparse.Namespace) -> None:
         else:
             print(f"Session: {cyan(session_id[:8])} | Context window {yellow(wi)}\n")
 
+        if not timeline:
+            print(dim("(no user prompts in this window; team protocol messages may exist — try --show-system)"))
+            print()
+
         active_team = ""
         for item in timeline:
             if isinstance(item, TeammateMessage):

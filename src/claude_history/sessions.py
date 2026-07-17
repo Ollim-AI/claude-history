@@ -86,7 +86,21 @@ def get_compactions(records: list[Record], session_id: str) -> list[CompactionWi
     session_prompts.sort(key=lambda x: x.timestamp or DT_MIN)
 
     if not session_prompts:
-        return []
+        # Teammate-driven or tool-only sessions have records but no typed
+        # prompts; give them one synthetic window so transcript can render
+        # the timeline (teammate messages) instead of erroring while the
+        # sessions listing advertises '1 ctx'.
+        has_records = any(
+            not isinstance(r, ProgressStub) and r.get("sessionId") == session_id
+            for r in records
+        )
+        if not has_records:
+            return []
+        return [
+            CompactionWindow(
+                start_time=None, end_time=None, prompt_count=0, prompts=()
+            )
+        ]
 
     # Group prompts into context windows
     compactions: list[CompactionWindow] = []
