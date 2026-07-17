@@ -235,3 +235,38 @@ class TestBrokenPipe:
         assert rc == 141, f"exit {rc}, stderr: {stderr}"
         assert "Traceback" not in stderr
         assert "BrokenPipeError" not in stderr
+
+
+class TestSearchShowsSessionId:
+    def test_match_line_includes_session_id(self, tmp_path: Path, capsys) -> None:
+        # SKILL.md's workflow is search -> transcript SESSION; without the
+        # session id in results that hand-off is impossible.
+        records = [
+            {
+                "type": "user",
+                "uuid": "aaaa1111",
+                "parentUuid": None,
+                "sessionId": "deadbeef-0000-1111-2222-333344445555",
+                "timestamp": "2026-01-01T10:00:00Z",
+                "message": {"content": [{"type": "text", "text": "find me quokka"}]},
+            },
+            {
+                "type": "assistant",
+                "uuid": "bbbb2222",
+                "parentUuid": "aaaa1111",
+                "sessionId": "deadbeef-0000-1111-2222-333344445555",
+                "timestamp": "2026-01-01T10:00:01Z",
+                "message": {"content": [{"type": "text", "text": "found"}]},
+            },
+        ]
+        _write_session(tmp_path, "deadbeef-0000-1111-2222-333344445555", records)
+        from claude_history.cli import cmd_search
+
+        args = argparse.Namespace(
+            project=str(tmp_path), cwd=None, query="quokka", target="prompts",
+            prompts_only=False, responses_only=False, case_sensitive=False,
+            timestamps=False, since=None,
+        )
+        cmd_search(args)
+        out = capsys.readouterr().out
+        assert "s:deadbeef" in out

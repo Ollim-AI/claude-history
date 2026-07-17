@@ -7,7 +7,7 @@ import sys
 
 from claude_history.agents import search_subagent_files
 from claude_history.io import parse_jsonl_file
-from claude_history.models import ALL_SEARCH_TARGETS, SearchTarget
+from claude_history.models import ALL_SEARCH_TARGETS, DT_MIN, SearchTarget
 from claude_history.render import cyan, dim, format_time, green, yellow
 from claude_history.resolve import parse_since, resolve_project_dir
 from claude_history.search import highlight_match, prefilter_files, search_records
@@ -88,6 +88,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         matches.extend(
             search_subagent_files(subagent_files, query, case_sensitive, targets)
         )
+        matches.sort(key=lambda m: m.timestamp or DT_MIN, reverse=True)
 
     # Apply --since to parsed record timestamps (mtime was a coarse pre-filter)
     if since_dt:
@@ -118,6 +119,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     }
     for match in matches:
         uuid_short = cyan(match.uuid[:8])
+        session_short = dim(f"s:{match.session_id[:8]}") if match.session_id else dim("s:?")
         ts = (
             dim(format_time(match.timestamp, use_iso=args.timestamps))
             if match.timestamp
@@ -125,7 +127,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         )
         match_type = type_labels.get(match.type, dim("[response]"))
         snippet = highlight_match(match.text, query, case_sensitive=case_sensitive)
-        print(f"{uuid_short} | {ts} | {match_type}")
+        print(f"{uuid_short} | {session_short} | {ts} | {match_type}")
         print(f"  {snippet}")
         print()
 
