@@ -56,6 +56,13 @@ def resolve_project_dir(args: argparse.Namespace) -> Path:
         result = Path(args.project)
         if result.exists():
             return result
+        if "/" not in args.project:
+            named = CLAUDE_PROJECTS_DIR / args.project
+            if named.exists():
+                return named
+            print(f"Error: Project directory does not exist: {args.project}", file=sys.stderr)
+            print(f"  Tried: {result.absolute()} and {named}", file=sys.stderr)
+            sys.exit(1)
         print(f"Error: Project directory does not exist: {args.project}", file=sys.stderr)
         sys.exit(1)
 

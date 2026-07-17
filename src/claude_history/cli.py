@@ -804,7 +804,7 @@ def main() -> None:
         "--cwd", help="Working directory path to find project for"
     )
     sessions_parser.add_argument(
-        "--project", help="Direct project directory path in ~/.claude/projects/"
+        "--project", help="Project directory name or path in ~/.claude/projects/ (names start with '-', so use --project=NAME)"
     )
     sessions_parser.add_argument(
         "-t",
@@ -845,7 +845,7 @@ def main() -> None:
         "--cwd", help="Working directory path to find project for"
     )
     response_parser.add_argument(
-        "--project", help="Direct project directory path in ~/.claude/projects/"
+        "--project", help="Project directory name or path in ~/.claude/projects/ (names start with '-', so use --project=NAME)"
     )
 
     # subagents command
@@ -863,7 +863,7 @@ def main() -> None:
         "--cwd", help="Working directory path to find project for"
     )
     subagents_parser.add_argument(
-        "--project", help="Direct project directory path in ~/.claude/projects/"
+        "--project", help="Project directory name or path in ~/.claude/projects/ (names start with '-', so use --project=NAME)"
     )
 
     # transcript command
@@ -908,7 +908,7 @@ def main() -> None:
         "--cwd", help="Working directory path to find project for"
     )
     transcript_parser.add_argument(
-        "--project", help="Direct project directory path in ~/.claude/projects/"
+        "--project", help="Project directory name or path in ~/.claude/projects/ (names start with '-', so use --project=NAME)"
     )
 
     # search command
@@ -934,7 +934,7 @@ def main() -> None:
         "--cwd", help="Working directory path to find project for"
     )
     search_parser.add_argument(
-        "--project", help="Direct project directory path in ~/.claude/projects/"
+        "--project", help="Project directory name or path in ~/.claude/projects/ (names start with '-', so use --project=NAME)"
     )
     search_parser.add_argument(
         "-t",

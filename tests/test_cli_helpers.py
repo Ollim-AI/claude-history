@@ -1,5 +1,6 @@
 """Tests for cli.py helper functions (parse_since, encode_path, highlight_match, etc.)."""
 
+import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ import pytest
 from claude_history.cli import highlight_match, parse_since
 from claude_history.resolve import (
     encode_path,
+    resolve_project_dir,
     find_session_across_projects,
     find_subagent_across_projects,
     find_prompt_across_projects,
@@ -389,3 +391,30 @@ class TestFindPromptAcrossProjects:
 
         result = find_prompt_across_projects("nonexistent-uuid")
         assert result is None
+
+
+class TestResolveProjectByName:
+    def test_bare_name_resolves_under_projects_dir(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # All encoded project names start with '-'; README documents passing
+        # the name directly (--project=-Users-me-repo), not only a full path.
+        projects = tmp_path / "projects"
+        target = projects / "-Users-me-repo"
+        target.mkdir(parents=True)
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", projects)
+        args = argparse.Namespace(project="-Users-me-repo", cwd=None)
+        assert resolve_project_dir(args) == target
+
+    def test_missing_name_reports_both_paths_tried(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        monkeypatch.setattr(
+            "claude_history.resolve.CLAUDE_PROJECTS_DIR", tmp_path / "projects"
+        )
+        args = argparse.Namespace(project="-no-such-project", cwd=None)
+        with pytest.raises(SystemExit):
+            resolve_project_dir(args)
+        err = capsys.readouterr().err
+        assert "Tried:" in err
+        assert "-no-such-project" in err
