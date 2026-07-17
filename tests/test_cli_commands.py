@@ -265,7 +265,7 @@ class TestSearchShowsSessionId:
         args = argparse.Namespace(
             project=str(tmp_path), cwd=None, query="quokka", target="prompts",
             prompts_only=False, responses_only=False, case_sensitive=False,
-            timestamps=False, since=None,
+            timestamps=False, since=None, limit=50,
         )
         cmd_search(args)
         out = capsys.readouterr().out
@@ -419,3 +419,49 @@ class TestSubagentSessionRefFilter:
         cmd_subagents(args)
         out = capsys.readouterr().out
         assert "def456a" in out
+
+
+class TestSearchLimit:
+    def _project(self, tmp_path: Path, count: int) -> Path:
+        records = []
+        for i in range(count):
+            records.append({
+                "type": "user", "uuid": f"u{i:03d}", "parentUuid": None,
+                "sessionId": "abc12345-1111-2222-3333-444455556666",
+                "timestamp": f"2026-01-01T10:{i:02d}:00Z",
+                "message": {"content": [{"type": "text", "text": f"needle {i}"}]},
+            })
+            records.append({
+                "type": "assistant", "uuid": f"a{i:03d}", "parentUuid": f"u{i:03d}",
+                "sessionId": "abc12345-1111-2222-3333-444455556666",
+                "timestamp": f"2026-01-01T10:{i:02d}:01Z",
+                "message": {"content": [{"type": "text", "text": "ok"}]},
+            })
+        _write_session(tmp_path, "abc12345-1111-2222-3333-444455556666", records)
+        return tmp_path
+
+    def _args(self, project: Path, **kw) -> argparse.Namespace:
+        base = dict(project=str(project), cwd=None, query="needle",
+                    target="prompts", prompts_only=False, responses_only=False,
+                    case_sensitive=False, timestamps=False, since=None, limit=50)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_matches_capped_at_limit_newest_first(self, tmp_path: Path, capsys) -> None:
+        import re
+
+        from claude_history.cli import cmd_search
+
+        cmd_search(self._args(self._project(tmp_path, 8), limit=3))
+        out = re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out)
+        assert "showing newest 3" in out
+        assert out.count("[prompt]") == 3
+        assert "needle 7" in out  # newest kept
+        assert "needle 0" not in out  # oldest dropped
+
+    def test_invalid_limit_rejected(self, tmp_path: Path, capsys) -> None:
+        from claude_history.cli import cmd_search
+
+        with pytest.raises(SystemExit):
+            cmd_search(self._args(tmp_path, limit=0))
+        assert "positive integer" in capsys.readouterr().err

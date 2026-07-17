@@ -57,6 +57,9 @@ def cmd_search(args: argparse.Namespace) -> None:
     if not query.strip():
         print("Error: search query must not be empty", file=sys.stderr)
         sys.exit(1)
+    if args.limit < 1:
+        print(f"Error: --limit must be a positive integer (got {args.limit})", file=sys.stderr)
+        sys.exit(1)
     case_sensitive = args.case_sensitive
     targets = _parse_targets(args)
 
@@ -73,6 +76,12 @@ def cmd_search(args: argparse.Namespace) -> None:
 
     # Pre-filter files with grep for content matches
     matching_files = prefilter_files(project_dir, query, case_sensitive, since_dt)
+    if len(matching_files) > 100:
+        print(
+            f"Searching {len(matching_files)} matching files"
+            " (narrow with --since or -p for prompts only)...",
+            file=sys.stderr,
+        )
     session_files = [f for f in matching_files if "/subagents/" not in str(f)]
     subagent_files = [f for f in matching_files if "/subagents/" in str(f)]
     matches = []
@@ -109,7 +118,14 @@ def cmd_search(args: argparse.Namespace) -> None:
     if not matches:
         return
 
-    print(f'Found {yellow(len(matches))} match(es) for "{query}":\n')
+    total = len(matches)
+    limit = args.limit
+    shown = matches if total <= limit else matches[:limit]
+    if total > limit:
+        print(f'Found {yellow(total)} match(es) for "{query}", showing newest {limit} (raise with --limit N, narrow with --since):\n')
+    else:
+        print(f'Found {yellow(total)} match(es) for "{query}":\n')
+    matches = shown
 
     type_labels = {
         "prompt": green("[prompt]"),

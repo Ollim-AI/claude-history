@@ -195,6 +195,12 @@ def main() -> None:
     search_parser.add_argument(
         "--since", help="Show matches since (e.g., 3d, 1w, 24h, today, 2024-01-15)"
     )
+    search_parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="Maximum matches to display, newest first (default: 50)",
+    )
 
     args = parser.parse_args()
 
