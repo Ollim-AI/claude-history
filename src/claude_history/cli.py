@@ -101,6 +101,12 @@ def main() -> None:
         "--session", help="Filter by session ID prefix"
     )
     subagents_parser.add_argument(
+        "--page", type=int, default=1, help="Page number (default: 1)"
+    )
+    subagents_parser.add_argument(
+        "--size", type=int, help="Number of subagents per page (default: 20)"
+    )
+    subagents_parser.add_argument(
         "--since", help="Show subagents since (e.g., 3d, 1w, 24h, today, 2024-01-15)"
     )
     subagents_parser.add_argument(

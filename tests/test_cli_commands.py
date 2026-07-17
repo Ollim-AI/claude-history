@@ -311,3 +311,41 @@ class TestSubagentDetail:
         captured = capsys.readouterr()
         assert "No subagent found" in captured.err
         assert captured.out == ""
+
+
+class TestSubagentListingPagination:
+    def _project(self, tmp_path: Path, count: int) -> Path:
+        base = tmp_path / "11111111-2222-3333-4444-555555555555" / "subagents"
+        base.mkdir(parents=True)
+        for i in range(count):
+            (base / f"agent-aa{i:04d}f.jsonl").write_text(json.dumps({
+                "type": "user", "uuid": f"u{i}",
+                "sessionId": "11111111-2222-3333-4444-555555555555",
+                "timestamp": f"2026-01-01T{i:02d}:00:00Z",
+                "message": {"role": "user", "content": f"task {i}"},
+            }) + "\n")
+        return tmp_path
+
+    def _args(self, project: Path, **kw) -> argparse.Namespace:
+        base = dict(project=str(project), cwd=None, agent_id=None,
+                    session=None, since=None, page=1, size=None)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_listing_capped_at_default_page_size(self, tmp_path: Path, capsys) -> None:
+        from claude_history.cli import cmd_subagents
+
+        project = self._project(tmp_path, 23)
+        cmd_subagents(self._args(project))
+        out = capsys.readouterr().out
+        assert "page 1/2, 23 total" in out
+        assert out.count("(session:") == 20
+        assert "--page 2" in out
+
+    def test_second_page_shows_remainder(self, tmp_path: Path, capsys) -> None:
+        from claude_history.cli import cmd_subagents
+
+        project = self._project(tmp_path, 23)
+        cmd_subagents(self._args(project, page=2))
+        out = capsys.readouterr().out
+        assert out.count("(session:") == 3

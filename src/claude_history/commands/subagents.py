@@ -24,6 +24,10 @@ from claude_history.resolve import (
     resolve_project_dir,
 )
 
+# Agent-heavy projects hold thousands of subagents; an unpaged listing
+# floods 15k+ lines
+SUBAGENT_PAGE_SIZE = 20
+
 
 def _subagent_detail(project_dir, agent_id: str) -> None:
     """Render the detail view for one subagent by direct file lookup.
@@ -125,10 +129,23 @@ def cmd_subagents(args: argparse.Namespace) -> None:
         print("No subagent files found.")
         return
 
-    # Listing view
-    print(f"Subagent threads ({len(subagents)}):\n")
+    # Paginate (newest first, like sessions)
+    if args.size is not None and args.size < 1:
+        print(f"Error: --size must be a positive integer (got {args.size})", file=sys.stderr)
+        sys.exit(1)
+    page = args.page
+    page_size = args.size if args.size is not None else SUBAGENT_PAGE_SIZE
+    total_pages = (len(subagents) + page_size - 1) // page_size
+    if page < 1 or page > total_pages:
+        print(f"Error: Page {page} out of range (1-{total_pages})", file=sys.stderr)
+        sys.exit(1)
+    start_idx = (page - 1) * page_size
+    page_agents = subagents[start_idx : start_idx + page_size]
 
-    for agent in subagents:
+    # Listing view
+    print(f"Subagent threads (page {page}/{total_pages}, {len(subagents)} total):\n")
+
+    for agent in page_agents:
         session_short = cyan(agent.session_id[:8])
         label = ""
         if agent.teammate_name:
@@ -152,5 +169,7 @@ def cmd_subagents(args: argparse.Namespace) -> None:
             print(f"    {dim(preview)}")
         print()
 
-    if subagents:
-        print(dim(f"  > subagents {subagents[0].agent_id}"))
+    if page < total_pages:
+        print(f"Page {page}/{total_pages}. Use --page {page + 1} for more.")
+    if page_agents:
+        print(dim(f"  > subagents {page_agents[0].agent_id}"))
