@@ -25,6 +25,29 @@ from claude_history.models import (
 # Tools whose results are user feedback — always shown in transcripts
 FEEDBACK_TOOLS = frozenset({"AskUserQuestion", "ExitPlanMode"})
 
+# Success tool-result display caps (errors and full detail are never clipped)
+MAX_RESULT_LINES = 20
+MAX_RESULT_CHARS = 4000
+
+
+def _clip_result(text: str) -> tuple[str, str]:
+    """Clip a success tool result to line and char caps.
+
+    Returns (displayed_text, note) where note is "" when nothing was clipped.
+    A line cap alone is not enough: a single-line 300KB result would print
+    verbatim.
+    """
+    lines = text.split("\n")
+    display = "\n".join(lines[:MAX_RESULT_LINES])
+    parts = []
+    if len(display) > MAX_RESULT_CHARS:
+        parts.append(f"{len(display) - MAX_RESULT_CHARS} more chars")
+        display = display[:MAX_RESULT_CHARS]
+    if len(lines) > MAX_RESULT_LINES:
+        parts.append(f"{len(lines) - MAX_RESULT_LINES} more lines")
+    note = f"... ({', '.join(parts)})" if parts else ""
+    return display, note
+
 
 def cyan(s: object) -> str:
     return f"{_CYAN}{s}{_RESET}"
@@ -247,23 +270,21 @@ def render_blocks(
                     print(yellow("[result] (error)"))
                 else:
                     print(dim("[result]"))
+                show_full = full_detail or content.is_error or is_feedback
                 if isinstance(content.content, str):
                     text = content.content
-                    show_full = full_detail or content.is_error or is_feedback
-                    if show_full:
-                        print(text if content.is_error else dim(text))
-                    else:
-                        lines = text.split("\n")
-                        if len(lines) <= 20:
-                            print(dim(text))
-                        else:
-                            print(dim("\n".join(lines[:20])))
-                            print(dim(f"... ({len(lines) - 20} more lines)"))
-                            if detail_hint and not hint_printed:
-                                print(dim(f"  > {detail_hint}"))
-                                hint_printed = True
                 else:
-                    print(dim(json.dumps(content.content, indent=2)))
+                    text = json.dumps(content.content, indent=2)
+                if show_full:
+                    print(text if content.is_error else dim(text))
+                else:
+                    display, note = _clip_result(text)
+                    print(dim(display))
+                    if note:
+                        print(dim(note))
+                        if detail_hint and not hint_printed:
+                            print(dim(f"  > {detail_hint}"))
+                            hint_printed = True
                 print()
                 prev_type = "tool_result"
 
