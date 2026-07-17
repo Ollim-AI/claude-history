@@ -156,7 +156,7 @@ def cmd_response(args: argparse.Namespace) -> None:
     """
     project_dir = resolve_project_dir(args)
 
-    target_uuid = args.uuid
+    target_uuid = args.uuid.lower()
     show_thinking = args.show_thinking
     show_tools = not args.hide_tools
     show_tool_results = not args.hide_tool_results
@@ -223,6 +223,7 @@ def cmd_subagents(args: argparse.Namespace) -> None:
     # Apply filters
     session_filter = getattr(args, "session", None)
     if session_filter:
+        session_filter = session_filter.lower()
         subagents = [a for a in subagents if a.session_id.startswith(session_filter)]
     since = getattr(args, "since", None)
     if since:
@@ -236,6 +237,7 @@ def cmd_subagents(args: argparse.Namespace) -> None:
     # Detail view for a specific agent
     agent_id = getattr(args, "agent_id", None)
     if agent_id:
+        agent_id = agent_id.lower()
         # Match by agent_id prefix
         matches = [a for a in subagents if a.agent_id.startswith(agent_id)]
         if not matches:
@@ -341,8 +343,8 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     """
     project_dir = resolve_project_dir(args)
 
-    # Detect agent ID (hex hash without dashes, not 'prev')
-    raw_id = args.identifier.split(":")[0]
+    # Detect agent ID (hex hash without dashes, not 'prev'); stored IDs are lowercase
+    raw_id = args.identifier.split(":")[0].lower()
     if re.fullmatch(r'[0-9a-f]+', raw_id) and not raw_id.startswith("prev"):
         agent_file = find_subagent_file(project_dir, raw_id)
         if not agent_file:

@@ -437,3 +437,13 @@ class TestInvalidWindowSuffix:
         with pytest.raises(SystemExit):
             resolve_session_ref("prev:", tmp_path)
         assert "Invalid context window" in capsys.readouterr().err
+
+
+class TestCaseInsensitiveHexIds:
+    def test_uppercase_prefix_lowered(self, tmp_path: Path) -> None:
+        # Stored session IDs are lowercase hex; uppercase input previously
+        # fell through to slug resolution and errored.
+        assert resolve_session_ref("9AAEDC03", tmp_path) == ("9aaedc03", None)
+
+    def test_uppercase_prefix_with_window(self, tmp_path: Path) -> None:
+        assert resolve_session_ref("9AAEDC03:2", tmp_path) == ("9aaedc03", 2)

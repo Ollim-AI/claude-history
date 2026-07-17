@@ -160,13 +160,14 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
             sys.exit(1)
     else:
         # If it doesn't look like a hex UUID prefix, try slug resolution
-        if not re.fullmatch(r'[0-9a-f-]+', identifier):
+        if not re.fullmatch(r"[0-9a-fA-F-]+", identifier):
             sid = resolve_slug(identifier, project_dir)
             if sid:
                 return (sid[:8], ctx_window)
             print(f"Error: No session found with slug '{identifier}'", file=sys.stderr)
             sys.exit(1)
-        return (identifier, ctx_window)
+        # Stored session IDs are lowercase hex
+        return (identifier.lower(), ctx_window)
 
     session_ids = get_recent_session_ids(project_dir, count=n + 1)
     if len(session_ids) <= n:
