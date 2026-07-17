@@ -5,10 +5,13 @@ from pathlib import Path
 
 from claude_history.io import (
     _extract_progress_stub,
+    find_subagent_file,
     get_all_conversations,
     get_session_conversations,
+    iter_subagent_files,
     parse_jsonl_file,
     parse_subagent_file,
+    subagent_session_id,
 )
 from claude_history.models import ProgressStub
 
@@ -225,3 +228,114 @@ class TestGetSessionConversations:
         result = get_session_conversations(tmp_path, "abc123", include_progress_stubs=False)
         assert result is not None
         assert result[0]["_source_file"] == "abc123.jsonl"
+
+
+class TestSubagentFileLayouts:
+    """Subagent files exist in two layouts: flat ({session}/subagents/) and
+    workflow ({session}/subagents/workflows/{run}/). Both must be discovered."""
+
+    def _make_project(self, tmp_path: Path) -> tuple[Path, Path, Path]:
+        session = "11111111-2222-3333-4444-555555555555"
+        flat = tmp_path / session / "subagents" / "agent-aaa111.jsonl"
+        flat.parent.mkdir(parents=True)
+        flat.write_text(
+            _compact({"type": "user", "uuid": "u1", "sessionId": session,
+                      "timestamp": "2026-01-01T00:00:00Z",
+                      "message": {"role": "user", "content": "flat prompt"}}) + "\n"
+        )
+        wf = (tmp_path / session / "subagents" / "workflows" / "wf_123-abc"
+              / "agent-bbb222.jsonl")
+        wf.parent.mkdir(parents=True)
+        wf.write_text(
+            _compact({"type": "user", "uuid": "u2", "sessionId": session,
+                      "timestamp": "2026-01-01T00:00:00Z",
+                      "message": {"role": "user", "content": "workflow prompt"}}) + "\n"
+        )
+        return tmp_path, flat, wf
+
+    def test_iter_finds_both_layouts(self, tmp_path: Path) -> None:
+        project, flat, wf = self._make_project(tmp_path)
+        found = set(iter_subagent_files(project))
+        assert found == {flat, wf}
+
+    def test_find_subagent_file_workflow_layout(self, tmp_path: Path) -> None:
+        project, _, wf = self._make_project(tmp_path)
+        assert find_subagent_file(project, "bbb222") == wf
+
+    def test_session_id_flat_layout(self, tmp_path: Path) -> None:
+        _, flat, _ = self._make_project(tmp_path)
+        assert subagent_session_id(flat) == "11111111-2222-3333-4444-555555555555"
+
+    def test_session_id_workflow_layout(self, tmp_path: Path) -> None:
+        _, _, wf = self._make_project(tmp_path)
+        assert subagent_session_id(wf) == "11111111-2222-3333-4444-555555555555"
+
+
+class TestDegenerateLines:
+    """Valid JSON that is not a usable record must be skipped, not crash
+    every command with AttributeError downstream."""
+
+    def _parse(self, tmp_path: Path, lines: list[str]) -> list:
+        f = tmp_path / "s.jsonl"
+        f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return parse_jsonl_file(f, include_progress_stubs=False)
+
+    def test_non_object_json_lines_skipped(self, tmp_path: Path, capsys) -> None:
+        good = _compact({"type": "user", "uuid": "u1", "sessionId": "s",
+                         "message": {"content": "hi"}})
+        records = self._parse(tmp_path, ["42", '"str"', "[]", "null", good])
+        assert len(records) == 1
+        assert records[0]["uuid"] == "u1"
+        assert "skipped 4 malformed line(s)" in capsys.readouterr().err
+
+    def test_record_with_string_message_skipped(self, tmp_path: Path) -> None:
+        bad = _compact({"type": "user", "uuid": "u1", "message": "just a string"})
+        good = _compact({"type": "user", "uuid": "u2", "sessionId": "s",
+                         "message": {"content": "hi"}})
+        records = self._parse(tmp_path, [bad, good])
+        assert [r["uuid"] for r in records] == ["u2"]
+
+
+class TestNulByteFile:
+    def test_records_survive_nul_byte_in_file(self, tmp_path: Path, capsys) -> None:
+        # BSD grep declares a file with a NUL byte "binary" and replaces its
+        # output with one junk line, silently erasing the whole session.
+        good1 = _compact({"type": "user", "uuid": "u1", "sessionId": "s",
+                          "message": {"content": "before"}})
+        good2 = _compact({"type": "user", "uuid": "u2", "sessionId": "s",
+                          "message": {"content": "after"}})
+        f = tmp_path / "s.jsonl"
+        f.write_bytes(good1.encode() + b"\n" + b'{"bad": "\x00"}\n' + good2.encode() + b"\n")
+        records = parse_jsonl_file(f, include_progress_stubs=False)
+        uuids = [r["uuid"] for r in records if isinstance(r, dict) and "uuid" in r]
+        assert uuids == ["u1", "u2"]
+
+
+class TestNestedProgressMarker:
+    """A normal record whose nested JSON contains '"type":"progress"' (e.g.
+    inside toolUseResult) must survive parsing; genuine progress records are
+    identified by their own (first) type field."""
+
+    def _file(self, tmp_path: Path) -> Path:
+        nested = _compact({
+            "type": "user", "uuid": "u1", "sessionId": "s",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "message": {"content": [{"type": "text", "text": "check this"}]},
+            "toolUseResult": {"sample": {"type": "progress", "n": 1}},
+        })
+        genuine = _progress_line("p1", "u1")
+        f = tmp_path / "s.jsonl"
+        f.write_text(nested + "\n" + genuine + "\n", encoding="utf-8")
+        return f
+
+    def test_nested_marker_record_survives_with_stubs(self, tmp_path: Path) -> None:
+        records = parse_jsonl_file(self._file(tmp_path), include_progress_stubs=True)
+        dicts = [r for r in records if isinstance(r, dict)]
+        stubs = [r for r in records if isinstance(r, ProgressStub)]
+        assert [d["uuid"] for d in dicts] == ["u1"]
+        assert [s.uuid for s in stubs] == ["p1"]
+
+    def test_nested_marker_record_survives_without_stubs(self, tmp_path: Path) -> None:
+        records = parse_jsonl_file(self._file(tmp_path), include_progress_stubs=False)
+        assert [r["uuid"] for r in records if isinstance(r, dict)] == ["u1"]
+        assert not any(isinstance(r, ProgressStub) for r in records)

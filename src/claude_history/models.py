@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
-from dataclasses import dataclass, field
+import sys
+from dataclasses import dataclass, field  # noqa: I001
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -25,12 +27,25 @@ class SearchTarget(Enum):
 
 ALL_SEARCH_TARGETS = {t.value for t in SearchTarget}
 
-_RESET = "\033[0m"
-_BOLD = "\033[1m"
-_DIM = "\033[2m"
-_CYAN = "\033[36m"
-_YELLOW = "\033[33m"
-_GREEN = "\033[32m"
+def _colors_enabled() -> bool:
+    """ANSI colors: on for terminals, off when piped or NO_COLOR is set.
+
+    FORCE_COLOR/CLICOLOR_FORCE override piping (e.g. for `less -R`).
+    """
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_COLOR") or os.environ.get("CLICOLOR_FORCE"):
+        return True
+    return sys.stdout.isatty()
+
+
+_COLORS = _colors_enabled()
+_RESET = "\033[0m" if _COLORS else ""
+_BOLD = "\033[1m" if _COLORS else ""
+_DIM = "\033[2m" if _COLORS else ""
+_CYAN = "\033[36m" if _COLORS else ""
+_YELLOW = "\033[33m" if _COLORS else ""
+_GREEN = "\033[32m" if _COLORS else ""
 
 BlockType = Literal["thinking", "text", "tool_use", "tool_result", "notification", "hook"]
 
@@ -232,8 +247,8 @@ DT_MIN = datetime.min.replace(tzinfo=timezone.utc)
 
 # --- Agent teams support ---
 
-_BLUE = "\033[34m"
-_PURPLE = "\033[35m"
+_BLUE = "\033[34m" if _COLORS else ""
+_PURPLE = "\033[35m" if _COLORS else ""
 _TEAMMATE_COLORS: dict[str, str] = {
     "yellow": _YELLOW,
     "blue": _BLUE,
@@ -265,6 +280,42 @@ _TEAMMATE_MSG_RE = re.compile(
 
 
 # --- Leaf utilities (no internal module dependencies) ---
+
+
+def die(*lines: str, code: int = 1) -> None:
+    """Print error lines to stderr and exit.
+
+    Owns the 'errors never touch stdout' contract so call sites cannot
+    regress to bare print().
+    """
+    for line in lines:
+        print(line, file=sys.stderr)
+    sys.exit(code)
+
+
+def warn_ambiguous(kind: str, query: str, ids: list[str]) -> None:
+    """Note on stderr that a prefix matched several items; first one wins."""
+    others = ", ".join(ids[1:4])
+    print(
+        f"Note: {len(ids)} {kind} match '{query}'; showing {ids[0]}"
+        f" (others: {others})",
+        file=sys.stderr,
+    )
+
+
+def paginate(items: list, page: int, size: int | None, default_size: int) -> tuple[list, int]:
+    """Validate --page/--size and slice one page; returns (page_items, total_pages).
+
+    Exits with an error for a non-positive size or an out-of-range page.
+    """
+    if size is not None and size < 1:
+        die(f"Error: --size must be a positive integer (got {size})")
+    page_size = size if size is not None else default_size
+    total_pages = (len(items) + page_size - 1) // page_size
+    if page < 1 or page > total_pages:
+        die(f"Error: Page {page} out of range (1-{total_pages})")
+    start = (page - 1) * page_size
+    return items[start : start + page_size], total_pages
 
 
 def parse_timestamp(ts: str | None) -> datetime | None:
@@ -313,6 +364,16 @@ def extract_content_text(content: str | list) -> str:
                 text_parts.append(text)
 
     return " ".join(text_parts)
+
+
+def is_teammate_message_content(content: object) -> bool:
+    """True if a user record's content wraps a <teammate-message>.
+
+    Newer clients prefix the wrapper ("Another Claude session sent a
+    message:\\n<teammate-message ...>"), so prefix checks miss it; use the
+    same regex parse_teammate_message matches with.
+    """
+    return isinstance(content, str) and _TEAMMATE_MSG_RE.search(content) is not None
 
 
 def parse_teammate_message(record: dict) -> TeammateMessage | None:

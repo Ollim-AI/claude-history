@@ -291,3 +291,35 @@ class TestExtractUserPromptsStringContent:
         )
         prompts = extract_user_prompts(records)
         assert len(prompts) == 0
+
+
+class TestNewFormatCompat:
+    """v2.1.15x+ files carry no progress records: task notifications arrive
+    in array content, and Task->agent links live in toolUseResult."""
+
+    def test_notification_map_reads_array_content(self) -> None:
+        from claude_history.chain import build_notification_map
+
+        records = [{
+            "type": "user", "uuid": "n1", "parentUuid": "a0",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t9",
+                 "content": "<task-notification><task-id>tsk1</task-id>"
+                            "<status>completed</status><summary>done it</summary>"
+                            "<result>all good</result></task-notification>"},
+            ]},
+        }]
+        notifications = build_notification_map(records)
+        assert notifications["n1"].summary == "done it"
+
+    def test_task_agent_map_from_tool_use_result(self) -> None:
+        from claude_history.chain import build_task_agent_map
+
+        records = [{
+            "type": "user", "uuid": "r1", "parentUuid": "a1",
+            "toolUseResult": {"agentId": "abc999f", "status": "async_launched"},
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_42", "content": "launched"},
+            ]},
+        }]
+        assert build_task_agent_map(records) == {"toolu_42": "abc999f"}

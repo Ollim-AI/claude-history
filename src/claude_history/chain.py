@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 
 from claude_history.models import (
     DT_MIN,
@@ -18,27 +18,65 @@ from claude_history.models import (
     ToolUseContent,
     extract_content_text,
     extract_hook_contexts,
+    is_teammate_message_content,
     iter_user_records,
     parse_task_notification,
     parse_timestamp,
 )
 
 
-def extract_user_prompts(records: list[Record]) -> list[Prompt]:
-    """Extract user prompts from conversation records."""
+def _iter_turn_records(
+    children_map: dict[str, list[Record]], start_uuid: str
+) -> Iterator[Record]:
+    """Yield every record reachable from start_uuid without crossing another
+    user text prompt (the next turn).
+
+    Responses no longer hang directly off the prompt: current clients
+    (observed v2.1.156+) insert attachment/mode/etc. records between the
+    prompt and the first assistant record, and older clients bridge parallel
+    tool_use and Task/Skill chains through progress stubs — this traversal
+    walks through all of them and explores parallel branches fully.
+    """
+    queue = [start_uuid]
+    visited = {start_uuid}
+    while queue:
+        for child in children_map.get(queue.pop(), []):
+            if isinstance(child, ProgressStub):
+                child_uuid = child.uuid
+            else:
+                if is_user_text_prompt(child):
+                    continue  # next turn — don't cross
+                child_uuid = child.get("uuid")
+            if not child_uuid or child_uuid in visited:
+                continue
+            visited.add(child_uuid)
+            queue.append(child_uuid)
+            yield child
+
+
+def _has_assistant_descendant(
+    uuid: str, children_map: dict[str, list[Record]]
+) -> bool:
+    """True if an assistant record is reachable within the prompt's turn."""
+    return any(
+        not isinstance(r, ProgressStub) and r.get("type") == "assistant"
+        for r in _iter_turn_records(children_map, uuid)
+    )
+
+
+def extract_user_prompts(
+    records: list[Record], indexes: RecordIndexes | None = None
+) -> list[Prompt]:
+    """Extract user prompts from conversation records.
+
+    Pass pre-built indexes to avoid an extra O(N) index build when the
+    caller already has them (transcript, search).
+    """
     prompts: list[Prompt] = []
     seen_uuids: set[str] = set()
 
-    # Build parent->child type map to identify user-typed prompts
-    # User-typed prompts have an assistant child (Claude responds to them)
-    child_types: dict[str, str] = {}
-    for r in records:
-        if isinstance(r, ProgressStub):
-            continue
-        parent = r.get("parentUuid")
-        rtype = r.get("type")
-        if parent and rtype:
-            child_types[parent] = rtype
+    # User-typed prompts have a reachable assistant response
+    children_map, _ = indexes if indexes else build_record_indexes(records)
 
     for record in iter_user_records(records):
         # Skip compaction summaries (system-generated context summaries)
@@ -57,9 +95,9 @@ def extract_user_prompts(records: list[Record]) -> list[Prompt]:
         # string wrappers). Other string-content records (bash-input,
         # local-command-caveat, plain text prompts) are legitimate and handled
         # by downstream classification.
-        if isinstance(content, str) and content.startswith(
-            ("<teammate-message", "<task-notification>")
-        ):
+        if is_teammate_message_content(content):
+            continue
+        if isinstance(content, str) and content.startswith("<task-notification>"):
             continue
 
         prompt_text = extract_content_text(content)
@@ -78,7 +116,7 @@ def extract_user_prompts(records: list[Record]) -> list[Prompt]:
                 session_id=record.get("sessionId", "unknown"),
                 slug=record.get("slug", "unknown"),
                 is_tool_result="sourceToolAssistantUUID" in record,
-                has_assistant_child=child_types.get(uuid) == "assistant",
+                has_assistant_child=_has_assistant_descendant(uuid, children_map),
             )
         )
 
@@ -123,8 +161,8 @@ def is_user_text_prompt(record: dict) -> bool:
 
     content = record.get("message", {}).get("content", [])
 
-    # Teammate-message records have string content starting with <teammate-message
-    if isinstance(content, str) and content.startswith("<teammate-message"):
+    # Teammate-message wrapper records (possibly prefixed by client text)
+    if is_teammate_message_content(content):
         return False
 
     # Plain string content is an ordinary typed prompt (the dominant string
@@ -151,16 +189,6 @@ def is_user_text_prompt(record: dict) -> bool:
                 return True
 
     return False
-
-
-def _find_progress_sibling(siblings: list[Record], visited: set[str]) -> str | None:
-    """Find the first unvisited ProgressStub among siblings."""
-    for sibling in siblings:
-        if not isinstance(sibling, ProgressStub):
-            continue
-        if sibling.uuid and sibling.uuid not in visited:
-            return sibling.uuid
-    return None
 
 
 RecordIndexes = tuple[dict[str, list[Record]], dict[str, Record]]
@@ -198,95 +226,21 @@ def get_full_response(
 ) -> list[dict]:
     """Get all assistant records in the response chain for a prompt.
 
-    The chain includes both assistant and user (tool_result) records.
-    We follow all records but only return assistant records.
-    Stops at the next user prompt with text content.
-
-    Handles subagent chains where progress records bridge the gap between
-    tool_result records and subsequent assistant responses.
+    Collects every assistant record within the prompt's turn (see
+    _iter_turn_records), ordered by timestamp so parallel branches and a
+    dead-end branch cannot truncate the turn.
     """
-    # Find first assistant record (direct child of prompt)
-    first = None
-    for r in records:
-        if isinstance(r, ProgressStub):
-            continue
-        if r.get("type") == "assistant" and r.get("parentUuid") == prompt_uuid:
-            first = r
-            break
-
-    if not first:
-        return []
-
     if indexes:
-        children_map, record_map = indexes
+        children_map, _record_map = indexes
     else:
-        children_map, record_map = build_record_indexes(records)
+        children_map, _record_map = build_record_indexes(records)
 
-    chain = [first]
-    current_uuid = first.get("uuid", "")
-    visited: set[str] = {prompt_uuid, current_uuid}
-
-    while True:
-        children = children_map.get(current_uuid, [])
-
-        # Find first non-progress child
-        next_record = None
-        for child in children:
-            if isinstance(child, ProgressStub):
-                continue
-            if child.get("uuid") not in visited:
-                next_record = child
-                break
-
-        if not next_record:
-            # Dead end - try following through progress records.
-            # 1. Follow progress children (traverses agent progress chains
-            #    where parallel tool_use records are linked through deep
-            #    ProgressStub chains).
-            progress_child = _find_progress_sibling(children, visited)
-            if progress_child:
-                visited.add(progress_child)
-                current_uuid = progress_child
-                continue
-
-            # 2. Walk up parent chain looking for unvisited progress siblings.
-            #    One level handles Skill/Task bridges; multiple levels handle
-            #    parallel tool_use chains where the progress fork is on a
-            #    grandparent (e.g., tool_result → assistant → progress chain).
-            ancestor = record_map.get(current_uuid)
-            found_progress = False
-            for _ in range(10):  # bounded walk-up
-                if ancestor is None:
-                    break
-                parent_uuid = (
-                    ancestor.parentUuid
-                    if isinstance(ancestor, ProgressStub)
-                    else ancestor.get("parentUuid")
-                )
-                if not parent_uuid:
-                    break
-                progress_uuid = _find_progress_sibling(
-                    children_map.get(parent_uuid, []), visited
-                )
-                if progress_uuid:
-                    visited.add(progress_uuid)
-                    current_uuid = progress_uuid
-                    found_progress = True
-                    break
-                ancestor = record_map.get(parent_uuid)
-            if found_progress:
-                continue
-            break
-
-        # Stop at user prompts with text content (new conversation turn)
-        if is_user_text_prompt(next_record):
-            break
-        # Only add assistant records to chain
-        visited.add(next_record["uuid"])
-        if next_record.get("type") == "assistant":
-            chain.append(next_record)
-        current_uuid = next_record.get("uuid")
-
+    chain = [
+        r
+        for r in _iter_turn_records(children_map, prompt_uuid)
+        if not isinstance(r, ProgressStub) and r.get("type") == "assistant"
+    ]
+    chain.sort(key=lambda r: parse_timestamp(r.get("timestamp")) or DT_MIN)
     return chain
 
 
@@ -442,15 +396,33 @@ def _split_thinking_tags(text: str) -> list[ContentBlock]:
 
 
 def build_notification_map(records: list[Record]) -> dict[str, TaskNotification]:
-    """Map record UUID → TaskNotification for task-notification user records."""
+    """Map record UUID → TaskNotification for task-notification user records.
+
+    Notifications arrive as plain-string user records in older files and
+    inside text/tool_result blocks of array content in v2.1.19x+ files.
+    """
     notifications: dict[str, TaskNotification] = {}
     for record in iter_user_records(records):
         content = record.get("message", {}).get("content")
-        if not isinstance(content, str):
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            parts = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+                elif block.get("type") == "tool_result" and isinstance(
+                    block.get("content"), str
+                ):
+                    parts.append(block["content"])
+            text = " ".join(parts)
+        else:
             continue
-        if "<task-notification>" not in content:
+        if "<task-notification>" not in text:
             continue
-        notif = parse_task_notification(content)
+        notif = parse_task_notification(text)
         if notif:
             uuid = record.get("uuid", "")
             if uuid:
@@ -584,14 +556,30 @@ def extract_ordered_content(
 
 
 def build_task_agent_map(records: list[Record]) -> dict[str, str]:
-    """Build mapping from tool_use ID to agentId for Task tool calls.
+    """Build mapping from tool_use ID to agentId for Task/Agent tool calls.
 
-    Scans progress record stubs for parentToolUseID -> agentId pairs.
+    Old files link via progress-stub parentToolUseID → agentId; files
+    without progress records (v2.1.15x+) carry agentId in the Agent tool
+    result's toolUseResult.
     """
     mapping: dict[str, str] = {}
     for r in records:
-        if not isinstance(r, ProgressStub):
+        if isinstance(r, ProgressStub):
+            if r.parentToolUseID and r.agentId and r.parentToolUseID not in mapping:
+                mapping[r.parentToolUseID] = r.agentId
             continue
-        if r.parentToolUseID and r.agentId and r.parentToolUseID not in mapping:
-            mapping[r.parentToolUseID] = r.agentId
+        tool_use_result = r.get("toolUseResult")
+        if not isinstance(tool_use_result, dict):
+            continue
+        agent_id = tool_use_result.get("agentId")
+        if not agent_id:
+            continue
+        content = r.get("message", {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                tool_id = block.get("tool_use_id", "")
+                if tool_id and tool_id not in mapping:
+                    mapping[tool_id] = agent_id
     return mapping

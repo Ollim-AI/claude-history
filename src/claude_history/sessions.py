@@ -47,7 +47,9 @@ def get_compact_boundaries(
     return sorted(boundaries, key=lambda x: x.timestamp or DT_MIN)
 
 
-def get_compactions(records: list[Record], session_id: str) -> list[CompactionWindow]:
+def get_compactions(
+    records: list[Record], session_id: str, indexes=None
+) -> list[CompactionWindow]:
     """Group prompts into context windows based on compaction boundaries.
 
     Detects both explicit boundaries (compact_boundary records) and implicit
@@ -81,12 +83,26 @@ def get_compactions(records: list[Record], session_id: str) -> list[CompactionWi
     boundary_times = sorted(all_boundary_times)
 
     # Get prompts for this session
-    prompts = extract_user_prompts(records)
+    prompts = extract_user_prompts(records, indexes=indexes)
     session_prompts = [p for p in prompts if p.session_id == session_id]
     session_prompts.sort(key=lambda x: x.timestamp or DT_MIN)
 
     if not session_prompts:
-        return []
+        # Teammate-driven or tool-only sessions have records but no typed
+        # prompts; give them one synthetic window so transcript can render
+        # the timeline (teammate messages) instead of erroring while the
+        # sessions listing advertises '1 ctx'.
+        has_records = any(
+            not isinstance(r, ProgressStub) and r.get("sessionId") == session_id
+            for r in records
+        )
+        if not has_records:
+            return []
+        return [
+            CompactionWindow(
+                start_time=None, end_time=None, prompt_count=0, prompts=()
+            )
+        ]
 
     # Group prompts into context windows
     compactions: list[CompactionWindow] = []

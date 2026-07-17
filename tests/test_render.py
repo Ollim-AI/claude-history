@@ -298,3 +298,55 @@ class TestRenderBlocksToolResults:
         out = capsys.readouterr().out
         assert "/tmp/foo.py" in out
         assert '"file_path"' not in out
+
+
+class TestResultCharCap:
+    def _blocks(self, content) -> list[ContentBlock]:
+        return [
+            ContentBlock(type="tool_use", content=ToolUseContent(
+                id="t1", name="Bash", input={"command": "x"})),
+            ContentBlock(type="tool_result", content=ToolResultContent(
+                content=content, is_error=False)),
+        ]
+
+    def test_single_line_giant_result_clipped(self, capsys) -> None:
+        render_blocks(self._blocks("y" * 300_000), {})
+        out = capsys.readouterr().out
+        assert len(out) < 10_000
+        assert "more chars" in out
+
+    def test_list_content_clipped(self, capsys) -> None:
+        giant = [{"type": "text", "text": "z" * 300_000}]
+        render_blocks(self._blocks(giant), {})
+        out = capsys.readouterr().out
+        assert len(out) < 10_000
+        assert "more chars" in out
+
+    def test_error_results_never_clipped(self, capsys) -> None:
+        blocks = [
+            ContentBlock(type="tool_use", content=ToolUseContent(
+                id="t1", name="Bash", input={"command": "x"})),
+            ContentBlock(type="tool_result", content=ToolResultContent(
+                content="e" * 10_000, is_error=True)),
+        ]
+        render_blocks(blocks, {})
+        out = capsys.readouterr().out
+        assert "e" * 10_000 in out
+
+
+class TestBase64Elision:
+    def test_image_source_data_elided_in_full_detail(self, capsys) -> None:
+        # response (full_detail) previously printed raw base64 (100KB+).
+        blocks = [
+            ContentBlock(type="tool_use", content=ToolUseContent(
+                id="t1", name="Read", input={"file_path": "/x.jpg"})),
+            ContentBlock(type="tool_result", content=ToolResultContent(
+                content=[{"type": "image",
+                          "source": {"type": "base64", "media_type": "image/jpeg",
+                                     "data": "A" * 200_000}}],
+                is_error=False)),
+        ]
+        render_blocks(blocks, {}, full_detail=True)
+        out = capsys.readouterr().out
+        assert len(out) < 5_000
+        assert "base64 chars elided" in out

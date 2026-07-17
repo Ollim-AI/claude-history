@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import sys
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -42,80 +42,82 @@ def _extract_progress_stub(line: str) -> ProgressStub | None:
     )
 
 
+_FIRST_TYPE_RE = re.compile(r'"type":"([^"]*)"')
+
+
+def _is_progress_line(line: str) -> bool:
+    """A record is a progress record iff its own type field says so.
+
+    The record's top-level "type" is always the line's first occurrence
+    (verified against real data); a non-progress record can contain the
+    marker nested in toolUseResult JSON, and substring checks alone
+    silently dropped those records.
+    """
+    m = _FIRST_TYPE_RE.search(line)
+    return bool(m) and m.group(1) == "progress"
+
+
+def _parse_record_line(line: str) -> dict | None:
+    """Parse one JSONL line into a record dict, or None if unusable.
+
+    Valid JSON that is not an object (42, "str", []) or whose 'message' is
+    not an object would crash every downstream .get() — treat as malformed.
+    """
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    msg = obj.get("message")
+    if msg is not None and not isinstance(msg, dict):
+        return None
+    return obj
+
+
 def parse_jsonl_file(
     filepath: Path, include_progress_stubs: bool = True
 ) -> list[Record]:
     """Parse a JSONL file and return list of records.
 
-    Uses grep to filter out 'progress' records (subagent transcripts) which are
-    ~99% of file size. grep is ~5x faster than Python for scanning large files.
+    Progress records (~99% of old-format file size) are skipped by a cheap
+    substring check before JSON parsing. A grep -v fast path used to live
+    here; the in-process scan measured ~8x faster (subprocess fork and
+    pipe decoding dominated), so grep was dropped.
 
     Args:
         filepath: Path to the JSONL file
         include_progress_stubs: If True, also extract lightweight progress stubs
             (uuid, parentUuid, parentToolUseID, agentId) for chain traversal.
             Set to False for commands that don't need response chain following
-            (sessions, prompts, search -p) for a major speedup.
+            (sessions, prompts, search -p) for a speedup.
     """
-    records = []
+    records: list[Record] = []
     skipped = 0
     try:
-        # Use grep -F -f - to pipe the pattern via stdin, avoiding Windows
-        # argument quoting issues with double quotes in patterns
-        result = subprocess.run(
-            ["grep", "-F", "-v", "-f", "-", str(filepath)],
-            input='"type":"progress"\n',
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        for line in result.stdout.split("\n"):
-            if line.strip():
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
+        with open(filepath, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                if '"type":"progress"' in line and _is_progress_line(line):
+                    if include_progress_stubs:
+                        stub = _extract_progress_stub(line)
+                        if stub:
+                            records.append(stub)
+                    continue
+                record = _parse_record_line(line)
+                if record is not None:
+                    records.append(record)
+                else:
                     skipped += 1
         if skipped:
             print(
                 f"Warning: skipped {skipped} malformed line(s) in {filepath}",
                 file=sys.stderr,
             )
-
-        # Add lightweight progress stubs for chain traversal
-        if include_progress_stubs:
-            with open(filepath, encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if '"type":"progress"' not in line:
-                        continue
-                    stub = _extract_progress_stub(line)
-                    if stub:
-                        records.append(stub)
-    except (OSError, subprocess.SubprocessError):
-        # Fallback to Python if grep is unavailable
-        try:
-            with open(filepath, encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    line_stripped = line.strip()
-                    if not line_stripped:
-                        continue
-                    if '"type":"progress"' in line:
-                        if include_progress_stubs:
-                            stub = _extract_progress_stub(line)
-                            if stub:
-                                records.append(stub)
-                        continue
-                    try:
-                        records.append(json.loads(line_stripped))
-                    except json.JSONDecodeError:
-                        skipped += 1
-            if skipped:
-                print(
-                    f"Warning: skipped {skipped} malformed line(s) in {filepath}",
-                    file=sys.stderr,
-                )
-        except OSError as e:
-            print(f"Warning: failed to read {filepath}: {e}", file=sys.stderr)
+    except OSError as e:
+        print(f"Warning: failed to read {filepath}: {e}", file=sys.stderr)
     return records
 
 
@@ -153,9 +155,10 @@ def get_session_conversations(
     of parsing all files. Returns None if no matching file found (caller
     should fall back to get_all_conversations).
     """
-    matching = list(project_dir.glob(f"{session_prefix}*.jsonl"))
+    matching = newest_first(project_dir.glob(f"{session_prefix}*.jsonl"))
     if not matching:
         return None
+    # Ambiguous prefixes resolve to the most recently active session
     filepath = matching[0]
     records = parse_jsonl_file(filepath, include_progress_stubs)
     for r in records:
@@ -164,14 +167,53 @@ def get_session_conversations(
     return records
 
 
+def newest_first(paths: Iterator[Path] | list[Path]) -> list[Path]:
+    """Sort paths by mtime, newest first, dropping files that vanish mid-scan.
+
+    Ambiguous prefixes and cross-file searches resolve to the most recently
+    active file; this owns that policy (and the stat TOCTOU guard) once.
+    """
+    stamped = []
+    for p in paths:
+        try:
+            stamped.append((p.stat().st_mtime, p))
+        except OSError:
+            continue
+    stamped.sort(key=lambda t: t[0], reverse=True)
+    return [p for _, p in stamped]
+
+
+def agent_id_from_path(filepath: Path) -> str:
+    """Extract the agent ID from a subagent file path (agent-{hash}.jsonl)."""
+    return filepath.stem.removeprefix("agent-")
+
+
+def iter_subagent_files(project_dir: Path) -> Iterator[Path]:
+    """Yield subagent JSONL files across both storage layouts.
+
+    Agent-tool subagents: {session}/subagents/agent-{hash}.jsonl
+    Workflow subagents (observed from v2.1.154): {session}/subagents/workflows/{run}/agent-{hash}.jsonl
+    """
+    yield from project_dir.glob("*/subagents/agent-*.jsonl")
+    yield from project_dir.glob("*/subagents/workflows/*/agent-*.jsonl")
+
+
+def subagent_session_id(filepath: Path) -> str:
+    """Derive the session ID from a subagent file path (dir above 'subagents')."""
+    for parent in filepath.parents:
+        if parent.name == "subagents":
+            return parent.parent.name
+    return filepath.parent.parent.name
+
+
 def find_subagent_file(project_dir: Path, agent_id_prefix: str) -> Path | None:
     """Find a subagent file by agent_id prefix (hex hash).
 
     Returns the first matching file, or None.
     """
-    for path in project_dir.glob("*/subagents/agent-*.jsonl"):
-        stem_id = path.stem.replace("agent-", "")
-        if stem_id.startswith(agent_id_prefix):
+    agent_id_prefix = agent_id_prefix.lower()  # stored IDs are lowercase hex
+    for path in iter_subagent_files(project_dir):
+        if agent_id_from_path(path).startswith(agent_id_prefix):
             return path
     return None
 
@@ -189,9 +231,10 @@ def parse_subagent_file(filepath: Path) -> list[dict]:
             for line in f:
                 line = line.strip()
                 if line:
-                    try:
-                        records.append(json.loads(line))
-                    except json.JSONDecodeError:
+                    record = _parse_record_line(line)
+                    if record is not None:
+                        records.append(record)
+                    else:
                         skipped += 1
         if skipped:
             print(

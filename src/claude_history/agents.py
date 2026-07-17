@@ -6,7 +6,13 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-from claude_history.io import parse_jsonl_file, parse_subagent_file
+from claude_history.io import (
+    agent_id_from_path,
+    iter_subagent_files,
+    parse_jsonl_file,
+    parse_subagent_file,
+    subagent_session_id,
+)
 from claude_history.models import (
     DT_MIN,
     STOP_HOOK_FEEDBACK_PREFIX,
@@ -78,8 +84,8 @@ def _extract_error_texts(record: dict) -> list[str]:
 
 def extract_subagent_metadata(filepath: Path, records: list[dict]) -> SubagentMetadata:
     """Extract metadata from a subagent's parsed records."""
-    session_id = filepath.parent.parent.name
-    agent_id = filepath.stem.replace("agent-", "")
+    session_id = subagent_session_id(filepath)
+    agent_id = agent_id_from_path(filepath)
 
     # First record metadata
     first = records[0] if records else {}
@@ -163,7 +169,7 @@ def get_subagents(project_dir: Path) -> list[SubagentMetadata]:
     """List subagent files in the project directory with metadata."""
     subagents: list[SubagentMetadata] = []
 
-    for jsonl_file in project_dir.glob("*/subagents/agent-*.jsonl"):
+    for jsonl_file in iter_subagent_files(project_dir):
         records = parse_subagent_file(jsonl_file)
         if not records:
             continue
@@ -262,7 +268,7 @@ def search_subagent_files(
         records = parse_subagent_file(filepath)
         if not records:
             continue
-        agent_id = filepath.stem.replace("agent-", "")
+        agent_id = agent_id_from_path(filepath)
         session_id = records[0].get("sessionId", "")
         earliest_ts = parse_timestamp(records[0].get("timestamp"))
         matched_text = ""
@@ -325,11 +331,31 @@ def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None
         print("No records found in subagent file.")
         return
 
-    # Separate hook_progress records from the rest for rendering
+    # Collect hook events for rendering. Old files carry hook_progress
+    # records; files without progress records (v2.1.15x+) carry hook data
+    # in attachment records — normalize those to the hook_progress shape
+    # extract_ordered_content expects.
     hook_records = [
         r for r in all_records
         if r.get("type") == "progress" and r.get("data", {}).get("type") == "hook_progress"
     ]
+    for r in all_records:
+        if r.get("type") != "attachment":
+            continue
+        att = r.get("attachment", {})
+        if att.get("type") not in ("hook_success", "hook_additional_context"):
+            continue
+        content = att.get("content", "")
+        if isinstance(content, list):
+            content = "\n".join(str(c) for c in content)
+        hook_records.append({
+            "parentToolUseID": att.get("toolUseID", ""),
+            "data": {
+                "hookName": att.get("hookName", ""),
+                "hookEvent": att.get("hookEvent", ""),
+                "command": att.get("command", "") or content,
+            },
+        })
     # Build record list compatible with chain traversal (non-progress + progress stubs)
     from claude_history.models import ProgressStub
     records: list[dict | object] = []
@@ -344,7 +370,7 @@ def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None
         else:
             records.append(r)
 
-    agent_id = filepath.stem.replace("agent-", "")
+    agent_id = agent_id_from_path(filepath)
     show_thinking = args.show_thinking
     show_tools = not args.hide_tools
     show_tool_results = not getattr(args, "hide_tool_results", False)

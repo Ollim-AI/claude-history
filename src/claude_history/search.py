@@ -18,6 +18,7 @@ from claude_history.chain import (
     extract_user_prompts,
     get_full_response,
 )
+from claude_history.io import iter_subagent_files
 from claude_history.models import (
     DT_MIN,
     Record,
@@ -43,7 +44,7 @@ def prefilter_files(
             Applied before grep to avoid spawning subprocesses for old files.
     """
     jsonl_files = list(project_dir.glob("*.jsonl"))
-    jsonl_files.extend(project_dir.glob("*/subagents/agent-*.jsonl"))
+    jsonl_files.extend(iter_subagent_files(project_dir))
     if since_dt:
         cutoff = since_dt.timestamp()
         jsonl_files = [f for f in jsonl_files if f.stat().st_mtime >= cutoff]
@@ -54,7 +55,7 @@ def prefilter_files(
     def _check_file(f: Path) -> Path | None:
         try:
             p1 = subprocess.Popen(
-                ["grep", "-F", "-v", "-f", "-", str(f)],
+                ["grep", "-a", "-F", "-v", "-f", "-", "--", str(f)],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
             )
@@ -62,7 +63,7 @@ def prefilter_files(
                 p1.stdin.write(b'"type":"progress"\n')
                 p1.stdin.close()
                 p2 = subprocess.Popen(
-                    ["grep", "-F", "-q", *case_flag, "--", query],
+                    ["grep", "-a", "-F", "-q", *case_flag, "--", query],
                     stdin=p1.stdout,
                     stdout=subprocess.PIPE,
                 )
@@ -113,7 +114,9 @@ def search_records(
     q = compare(query)
     seen: set[str] = set()
 
-    prompts = extract_user_prompts(records)
+    # Built once; prompt classification and chain search share them
+    indexes = build_record_indexes(records)
+    prompts = extract_user_prompts(records, indexes=indexes)
     # Filter to user-typed prompts only
     prompts = [p for p in prompts if p.is_user_prompt]
 
@@ -125,7 +128,6 @@ def search_records(
         SearchTarget.THINKING,
         SearchTarget.HOOKS,
     }
-    indexes = build_record_indexes(records) if need_chain else None
 
     for prompt in prompts:
         prompt_text = prompt.text

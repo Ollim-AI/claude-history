@@ -7,10 +7,57 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from claude_history.models import CLAUDE_PROJECTS_DIR
+from claude_history.io import agent_id_from_path, iter_subagent_files, newest_first
+from claude_history.models import CLAUDE_PROJECTS_DIR, die, parse_timestamp
+
+
+def parse_since(value: str) -> datetime:
+    """Parse a --since value into a timezone-aware datetime.
+
+    Supports: Nm (minutes), Nh (hours), Nd (days), Nw (weeks),
+    ISO dates (2024-01-15), and named shortcuts (today, yesterday).
+    """
+    now = datetime.now(timezone.utc)
+    # Named shortcuts mark LOCAL calendar-day boundaries
+    if value == "today":
+        return datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+    if value == "yesterday":
+        return (datetime.now().astimezone() - timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+    # Relative shorthand: Nm, Nh, Nd, Nw
+    m = re.fullmatch(r"(\d+)([mhdw])", value)
+    if m:
+        n = int(m.group(1))
+        unit = m.group(2)
+        deltas = {
+            "m": timedelta(minutes=n),
+            "h": timedelta(hours=n),
+            "d": timedelta(days=n),
+            "w": timedelta(weeks=n),
+        }
+        return now - deltas[unit]
+    # Date-only: local midnight, consistent with today/yesterday
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        try:
+            return datetime.fromisoformat(value).astimezone()
+        except ValueError:
+            pass
+    # Full ISO timestamp
+    dt = parse_timestamp(value)
+    if dt:
+        return dt
+    die(
+        f"Error: Cannot parse --since value '{value}'",
+        "  Examples: 3d, 1w, 24h, 30m, today, yesterday, 2024-01-15",
+    )
 
 
 def encode_path(path: str) -> str:
@@ -52,21 +99,33 @@ def get_project_dir(cwd: str | None = None) -> Path | None:
 def resolve_project_dir(args: argparse.Namespace) -> Path:
     """Resolve project directory from args (--project or --cwd). Exits on failure."""
     if hasattr(args, "project") and args.project:
-        result = Path(args.project)
+        # Absolute path: encoded project names start with '-', and a relative
+        # dash-leading path downstream reads as an option cluster to grep
+        result = Path(args.project).expanduser()
         if result.exists():
-            return result
-        print(f"Error: Project directory does not exist: {args.project}")
-        sys.exit(1)
+            if not result.is_dir():
+                die(f"Error: --project is not a directory: {args.project}")
+            return result.resolve()
+        if "/" not in args.project:
+            named = CLAUDE_PROJECTS_DIR / args.project
+            if named.exists():
+                return named
+            die(
+                f"Error: Project directory does not exist: {args.project}",
+                f"  Tried: {result.absolute()} and {named}",
+            )
+        die(f"Error: Project directory does not exist: {args.project}")
 
     cwd = getattr(args, "cwd", None) or os.getcwd()
     result = get_project_dir(cwd)
     if result is not None and result.exists():
         return result
     encoded = encode_path(str(Path(cwd).resolve()))
-    print(f"Error: No project directory found for '{cwd}'")
-    print(f"  Searched: ~/.claude/projects/{encoded}")
-    print("  Hint: Use --project <path> to specify the project directory directly")
-    sys.exit(1)
+    die(
+        f"Error: No project directory found for '{cwd}'",
+        f"  Searched: ~/.claude/projects/{encoded}",
+        "  Hint: list projects with: ls ~/.claude/projects/  then pass --project=NAME",
+    )
 
 
 def get_recent_session_ids(project_dir: Path, count: int = 10) -> list[str]:
@@ -106,7 +165,7 @@ def resolve_slug(name: str, project_dir: Path) -> str | None:
     for field in ["customTitle", "slug"]:
         needle = f'"{field}":"{name}"'
         result = subprocess.run(
-            ["grep", "-F", "-r", "-m", "1", "--include=*.jsonl",
+            ["grep", "-a", "-F", "-r", "-m", "1", "--include=*.jsonl",
              needle, str(project_dir)],
             capture_output=True, text=True, timeout=10,
         )
@@ -128,6 +187,16 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
         if idx.isdigit():
             ctx_window = int(idx)
             identifier = base
+        elif base in ("latest", "prev") or re.fullmatch(
+            r"prev-\d+|[0-9a-fA-F-]+", base
+        ):
+            # Session-like base with a bad window suffix — error now instead of
+            # falling through to a misleading slug lookup. Slugs/custom titles
+            # containing ':' still reach resolve_slug untouched.
+            die(
+                f"Error: Invalid context window ':{idx}' in '{identifier}' — "
+                f"expected a non-negative integer (e.g. {base}:0)"
+            )
 
     if identifier == "latest":
         n = 0
@@ -136,23 +205,21 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
     elif identifier.startswith("prev-") and identifier[5:].isdigit():
         n = int(identifier[5:])
         if n < 1:
-            print("Error: prev-N requires N >= 1 (prev-1 = previous session).")
-            sys.exit(1)
+            die("Error: prev-N requires N >= 1 (prev-1 = previous session).")
     else:
         # If it doesn't look like a hex UUID prefix, try slug resolution
-        if not re.fullmatch(r'[0-9a-f-]+', identifier):
+        if not re.fullmatch(r"[0-9a-fA-F-]+", identifier):
             sid = resolve_slug(identifier, project_dir)
             if sid:
                 return (sid[:8], ctx_window)
-            print(f"Error: No session found with slug '{identifier}'")
-            sys.exit(1)
-        return (identifier, ctx_window)
+            die(f"Error: No session found with slug '{identifier}'")
+        # Stored session IDs are lowercase hex
+        return (identifier.lower(), ctx_window)
 
     session_ids = get_recent_session_ids(project_dir, count=n + 1)
     if len(session_ids) <= n:
         label = "latest" if n == 0 else f"prev-{n}"
-        print(f"Error: Only {len(session_ids)} sessions found, cannot resolve {label}.")
-        sys.exit(1)
+        die(f"Error: Only {len(session_ids)} sessions found, cannot resolve {label}.")
     return (session_ids[n][:8], ctx_window)
 
 
@@ -187,38 +254,60 @@ def find_subagent_across_projects(
 
     Returns (project_dir, agent_file_path) or None.
     """
+    agent_id_prefix = agent_id_prefix.lower()  # stored IDs are lowercase hex
     for d in _iter_other_projects(exclude_dir):
-        for path in d.glob("*/subagents/agent-*.jsonl"):
-            if path.stem.replace("agent-", "").startswith(agent_id_prefix):
+        for path in iter_subagent_files(d):
+            if agent_id_from_path(path).startswith(agent_id_prefix):
                 return (d, path)
     return None
 
 
 def find_prompt_across_projects(
     prompt_uuid: str, exclude_dir: Path | None = None
-) -> Path | None:
-    """Grep all project dirs for a file containing the prompt UUID.
+) -> tuple[Path, Path] | None:
+    """Grep project dirs for a session file containing the prompt UUID.
 
-    Returns project_dir or None.
+    Searches newest-first with early exit, so hits (usually in recently
+    active projects) return fast instead of scanning everything. A miss
+    scans all projects within a 30s budget; hitting the budget prints a
+    note so truncation is never silent. Returns (project_dir, file) or None.
     """
-    try:
-        result = subprocess.run(
-            ["grep", "-r", "-l", "-m", "1", "--include=*.jsonl",
-             prompt_uuid, str(CLAUDE_PROJECTS_DIR)],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    # Extract project dir from the matching file path
-    match_path = Path(result.stdout.strip().splitlines()[0])
-    # File is under CLAUDE_PROJECTS_DIR/<project>/ — walk up to find project dir
-    for parent in match_path.parents:
-        if parent.parent == CLAUDE_PROJECTS_DIR:
-            if exclude_dir and parent == exclude_dir:
-                return None
-            return parent
+    # Only top-level session files: that is all cmd_response can display,
+    # and it skips the ~2x-larger set of subagent files.
+    candidates = newest_first(
+        f for d in _iter_other_projects(exclude_dir) for f in d.glob("*.jsonl")
+    )
+
+    deadline = time.monotonic() + 30
+    chunk_size = 200
+    for i in range(0, len(candidates), chunk_size):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            print(
+                f"Note: UUID search stopped after 30s ({i}/{len(candidates)}"
+                " files searched); use --project to target a specific project",
+                file=sys.stderr,
+            )
+            break
+        chunk = [str(f) for f in candidates[i : i + chunk_size]]
+        try:
+            result = subprocess.run(
+                ["grep", "-a", "-l", "-s", "-F", "-m", "1", "--", prompt_uuid, *chunk],
+                capture_output=True, text=True, timeout=remaining,
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        except OSError as e:
+            print(
+                f"Warning: cross-project UUID search skipped (grep failed: {e})",
+                file=sys.stderr,
+            )
+            break
+        if result.stdout.strip():
+            # Output order follows arg order (newest first); paths were built
+            # as <project>/<session>.jsonl, so parent is the project dir
+            hit = Path(result.stdout.strip().splitlines()[0])
+            return (hit.parent, hit)
     return None
 
 

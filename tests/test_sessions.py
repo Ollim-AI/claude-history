@@ -264,3 +264,34 @@ class TestAccumulateSessionRecord:
         record = {**_user("u1", None, 0), "isCompactSummary": True}
         _accumulate_session_record(sess, record)
         assert sess.prompt_count == 0
+
+
+class TestPromptlessSessionWindow:
+    def test_session_with_records_but_no_prompts_gets_one_window(self) -> None:
+        # Teammate-driven sessions previously collapsed to zero windows and
+        # transcript errored while the listing advertised '1 ctx'.
+        records = [
+            {
+                "type": "user",
+                "uuid": "tm1",
+                "parentUuid": None,
+                "sessionId": "s1",
+                "timestamp": "2026-01-01T10:00:00Z",
+                "message": {"role": "user", "content":
+                            '<teammate-message teammate_id="lead">go</teammate-message>'},
+            },
+            {
+                "type": "assistant",
+                "uuid": "a1",
+                "parentUuid": "tm1",
+                "sessionId": "s1",
+                "timestamp": "2026-01-01T10:00:01Z",
+                "message": {"content": [{"type": "text", "text": "on it"}]},
+            },
+        ]
+        windows = get_compactions(records, "s1")
+        assert len(windows) == 1
+        assert windows[0].prompt_count == 0
+
+    def test_session_with_no_records_still_empty(self) -> None:
+        assert get_compactions([], "s1") == []

@@ -1,5 +1,6 @@
 """Tests for cli.py helper functions (parse_since, encode_path, highlight_match, etc.)."""
 
+import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ import pytest
 from claude_history.cli import highlight_match, parse_since
 from claude_history.resolve import (
     encode_path,
+    resolve_project_dir,
     find_session_across_projects,
     find_subagent_across_projects,
     find_prompt_across_projects,
@@ -376,7 +378,9 @@ class TestFindPromptAcrossProjects:
 
         result = find_prompt_across_projects("deadbeef-1234", exclude_dir=proj_a)
         assert result is not None
-        assert result.name == "-home-user-project-b"
+        project_dir, session_file = result
+        assert project_dir.name == "-home-user-project-b"
+        assert session_file.name == "session.jsonl"
 
     def test_returns_none_when_not_found(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         projects = tmp_path / "projects"
@@ -389,3 +393,171 @@ class TestFindPromptAcrossProjects:
 
         result = find_prompt_across_projects("nonexistent-uuid")
         assert result is None
+
+
+class TestResolveProjectByName:
+    def test_bare_name_resolves_under_projects_dir(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # All encoded project names start with '-'; README documents passing
+        # the name directly (--project=-Users-me-repo), not only a full path.
+        projects = tmp_path / "projects"
+        target = projects / "-Users-me-repo"
+        target.mkdir(parents=True)
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", projects)
+        args = argparse.Namespace(project="-Users-me-repo", cwd=None)
+        assert resolve_project_dir(args) == target
+
+    def test_missing_name_reports_both_paths_tried(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        monkeypatch.setattr(
+            "claude_history.resolve.CLAUDE_PROJECTS_DIR", tmp_path / "projects"
+        )
+        args = argparse.Namespace(project="-no-such-project", cwd=None)
+        with pytest.raises(SystemExit):
+            resolve_project_dir(args)
+        err = capsys.readouterr().err
+        assert "Tried:" in err
+        assert "-no-such-project" in err
+
+
+class TestInvalidWindowSuffix:
+    def test_latest_with_non_numeric_window_errors(self, tmp_path: Path, capsys) -> None:
+        with pytest.raises(SystemExit):
+            resolve_session_ref("latest:abc", tmp_path)
+        err = capsys.readouterr().err
+        assert "Invalid context window" in err
+        assert "latest:0" in err
+
+    def test_hex_prefix_with_negative_window_errors(self, tmp_path: Path, capsys) -> None:
+        with pytest.raises(SystemExit):
+            resolve_session_ref("9aaedc03:-1", tmp_path)
+        assert "Invalid context window" in capsys.readouterr().err
+
+    def test_trailing_bare_colon_errors(self, tmp_path: Path, capsys) -> None:
+        with pytest.raises(SystemExit):
+            resolve_session_ref("prev:", tmp_path)
+        assert "Invalid context window" in capsys.readouterr().err
+
+
+class TestCaseInsensitiveHexIds:
+    def test_uppercase_prefix_lowered(self, tmp_path: Path) -> None:
+        # Stored session IDs are lowercase hex; uppercase input previously
+        # fell through to slug resolution and errored.
+        assert resolve_session_ref("9AAEDC03", tmp_path) == ("9aaedc03", None)
+
+    def test_uppercase_prefix_with_window(self, tmp_path: Path) -> None:
+        assert resolve_session_ref("9AAEDC03:2", tmp_path) == ("9aaedc03", 2)
+
+
+class TestSearchTargetConflicts:
+    def _args(self, **kw) -> argparse.Namespace:
+        base = dict(target=None, prompts_only=False, responses_only=False)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_p_and_r_together_rejected(self, capsys) -> None:
+        # Previously -p silently won and -r was ignored.
+        from claude_history.cli import _parse_targets
+
+        with pytest.raises(SystemExit):
+            _parse_targets(self._args(prompts_only=True, responses_only=True))
+        assert "cannot be combined" in capsys.readouterr().err
+
+    def test_target_with_p_rejected(self, capsys) -> None:
+        from claude_history.cli import _parse_targets
+
+        with pytest.raises(SystemExit):
+            _parse_targets(self._args(target="tools", prompts_only=True))
+        assert "cannot be combined" in capsys.readouterr().err
+
+
+class TestFindPromptAcrossProjectsExclude:
+    def _projects(self, tmp_path: Path, monkeypatch) -> Path:
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", projects)
+        return projects
+
+    def test_match_in_other_project_wins_over_excluded_hit(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # Previously only the FIRST grep hit was inspected: if it happened to
+        # be in exclude_dir, a valid match elsewhere was never returned.
+        projects = self._projects(tmp_path, monkeypatch)
+        for name in ("-proj-a", "-proj-b"):
+            d = projects / name
+            d.mkdir()
+            (d / "s1.jsonl").write_text('{"uuid":"promptuuid42"}\n')
+        excluded = projects / "-proj-a"
+        found = find_prompt_across_projects("promptuuid42", exclude_dir=excluded)
+        assert found is not None
+        project_dir, session_file = found
+        assert project_dir == projects / "-proj-b"
+        assert session_file == projects / "-proj-b" / "s1.jsonl"
+
+    def test_only_excluded_match_returns_none(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        projects = self._projects(tmp_path, monkeypatch)
+        d = projects / "-proj-a"
+        d.mkdir()
+        (d / "s1.jsonl").write_text('{"uuid":"promptuuid42"}\n')
+        assert find_prompt_across_projects("promptuuid42", exclude_dir=d) is None
+
+
+class TestDashLeadingRelativeProject:
+    def test_relative_dash_path_resolved_absolute(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # A relative dash-leading path reached grep as an option cluster and
+        # silently produced zero records for a project full of sessions.
+        d = tmp_path / "-Users-me-repo"
+        d.mkdir()
+        monkeypatch.chdir(tmp_path)
+        args = argparse.Namespace(project="-Users-me-repo", cwd=None)
+        result = resolve_project_dir(args)
+        assert result.is_absolute()
+        assert result == d.resolve()
+
+
+class TestSinceConsistency:
+    def test_iso_date_is_local_midnight(self) -> None:
+        # ISO dates must mark local calendar-day boundaries like today/
+        # yesterday do, not UTC midnight.
+        result = parse_since("2024-06-15")
+        assert result.hour == 0 and result.minute == 0
+        assert result.utcoffset() == datetime(2024, 6, 15).astimezone().utcoffset()
+
+    def test_empty_string_rejected(self, capsys) -> None:
+        with pytest.raises(SystemExit):
+            parse_since("")
+        assert "Cannot parse --since" in capsys.readouterr().err
+
+    def test_invalid_calendar_date_rejected(self) -> None:
+        with pytest.raises(SystemExit):
+            parse_since("2024-13-45")
+
+
+class TestSearchQueryValidation:
+    def _args(self, **kw) -> argparse.Namespace:
+        base = dict(target="prompts", prompts_only=False, responses_only=False,
+                    query="x", case_sensitive=False, project=None, cwd=None,
+                    timestamps=False, since=None, limit=50)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_empty_query_rejected(self, tmp_path: Path, capsys) -> None:
+        from claude_history.cli import cmd_search
+
+        with pytest.raises(SystemExit):
+            cmd_search(self._args(query="  ", project=str(tmp_path)))
+        assert "must not be empty" in capsys.readouterr().err
+
+    def test_unknown_target_has_error_prefix(self, capsys) -> None:
+        from claude_history.cli import _parse_targets
+
+        with pytest.raises(SystemExit):
+            _parse_targets(self._args(target="Tools"))
+        assert "Error: Unknown target" in capsys.readouterr().err
