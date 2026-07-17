@@ -300,3 +300,66 @@ class TestClassificationAndTraversalRobustness:
         ]
         chain = get_full_response(records, "u1")
         assert [r["uuid"] for r in chain] == ["a1"]
+
+
+def _rec(rtype: str, uuid: str, parent: str | None, ts: str, content=None) -> dict:
+    r = {
+        "type": rtype,
+        "uuid": uuid,
+        "parentUuid": parent,
+        "sessionId": "s1",
+        "timestamp": ts,
+    }
+    if content is not None:
+        r["message"] = {"content": content}
+    return r
+
+
+class TestAttachmentChains:
+    """v2.1.90+ interposes attachment/mode/etc. records between the prompt
+    and the assistant; both classification and traversal must walk through."""
+
+    def _records(self) -> list[dict]:
+        return [
+            _rec("user", "u1", None, "2026-01-01T10:00:00Z",
+                 [{"type": "text", "text": "question"}]),
+            _rec("attachment", "at1", "u1", "2026-01-01T10:00:01Z"),
+            _rec("attachment", "at2", "at1", "2026-01-01T10:00:02Z"),
+            _rec("assistant", "a1", "at2", "2026-01-01T10:00:03Z",
+                 [{"type": "text", "text": "answer part 1"}]),
+            _rec("assistant", "a2", "a1", "2026-01-01T10:00:04Z",
+                 [{"type": "text", "text": "answer part 2"}]),
+        ]
+
+    def test_prompt_with_attachment_chained_response_is_user_prompt(self) -> None:
+        prompts = extract_user_prompts(self._records())
+        p = next(p for p in prompts if p.uuid == "u1")
+        assert p.has_assistant_child
+        assert p.is_user_prompt
+
+    def test_full_response_found_through_attachments(self) -> None:
+        chain = get_full_response(self._records(), "u1")
+        assert [r["uuid"] for r in chain] == ["a1", "a2"]
+
+    def test_dead_end_attachment_branch_does_not_truncate(self) -> None:
+        records = self._records() + [
+            # Dead-end attachment branch forking off a1
+            _rec("attachment", "at3", "a1", "2026-01-01T10:00:03.5Z"),
+            # Continuation past the fork: tool_result then more assistant work
+            _rec("user", "tr1", "a2", "2026-01-01T10:00:05Z",
+                 [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]),
+            _rec("assistant", "a3", "tr1", "2026-01-01T10:00:06Z",
+                 [{"type": "text", "text": "after tools"}]),
+        ]
+        chain = get_full_response(records, "u1")
+        assert [r["uuid"] for r in chain] == ["a1", "a2", "a3"]
+
+    def test_chain_stops_at_next_turn(self) -> None:
+        records = self._records() + [
+            _rec("user", "u2", "a2", "2026-01-01T10:01:00Z",
+                 [{"type": "text", "text": "next question"}]),
+            _rec("assistant", "b1", "u2", "2026-01-01T10:01:01Z",
+                 [{"type": "text", "text": "next answer"}]),
+        ]
+        chain = get_full_response(records, "u1")
+        assert [r["uuid"] for r in chain] == ["a1", "a2"]

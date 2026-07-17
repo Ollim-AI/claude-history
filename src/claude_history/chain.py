@@ -24,23 +24,41 @@ from claude_history.models import (
 )
 
 
+def _has_assistant_descendant(
+    uuid: str, children_map: dict[str, list[Record]]
+) -> bool:
+    """True if an assistant record is reachable from uuid without crossing
+    another user text prompt.
+
+    Responses no longer hang directly off the prompt: current Claude Code
+    versions insert attachment/mode/etc. records between the prompt and the
+    first assistant record, so classification must walk the chain.
+    """
+    queue = [uuid]
+    seen = {uuid}
+    while queue:
+        for child in children_map.get(queue.pop(), []):
+            if isinstance(child, ProgressStub):
+                child_uuid = child.uuid
+            else:
+                if child.get("type") == "assistant":
+                    return True
+                if is_user_text_prompt(child):
+                    continue  # next turn — don't cross
+                child_uuid = child.get("uuid")
+            if child_uuid and child_uuid not in seen:
+                seen.add(child_uuid)
+                queue.append(child_uuid)
+    return False
+
+
 def extract_user_prompts(records: list[Record]) -> list[Prompt]:
     """Extract user prompts from conversation records."""
     prompts: list[Prompt] = []
     seen_uuids: set[str] = set()
 
-    # Build parent->child type map to identify user-typed prompts
-    # User-typed prompts have an assistant child (Claude responds to them)
-    child_types: dict[str, str] = {}
-    for r in records:
-        if isinstance(r, ProgressStub):
-            continue
-        parent = r.get("parentUuid")
-        rtype = r.get("type")
-        # Any assistant child marks a user-typed prompt; never let a later
-        # non-assistant sibling (tool_result, branch) overwrite that.
-        if parent and rtype and child_types.get(parent) != "assistant":
-            child_types[parent] = rtype
+    # User-typed prompts have a reachable assistant response
+    children_map, _ = build_record_indexes(records)
 
     for record in iter_user_records(records):
         # Skip compaction summaries (system-generated context summaries)
@@ -80,7 +98,7 @@ def extract_user_prompts(records: list[Record]) -> list[Prompt]:
                 session_id=record.get("sessionId", "unknown"),
                 slug=record.get("slug", "unknown"),
                 is_tool_result="sourceToolAssistantUUID" in record,
-                has_assistant_child=child_types.get(uuid) == "assistant",
+                has_assistant_child=_has_assistant_descendant(uuid, children_map),
             )
         )
 
@@ -155,16 +173,6 @@ def is_user_text_prompt(record: dict) -> bool:
     return False
 
 
-def _find_progress_sibling(siblings: list[Record], visited: set[str]) -> str | None:
-    """Find the first unvisited ProgressStub among siblings."""
-    for sibling in siblings:
-        if not isinstance(sibling, ProgressStub):
-            continue
-        if sibling.uuid and sibling.uuid not in visited:
-            return sibling.uuid
-    return None
-
-
 RecordIndexes = tuple[dict[str, list[Record]], dict[str, Record]]
 
 
@@ -200,97 +208,40 @@ def get_full_response(
 ) -> list[dict]:
     """Get all assistant records in the response chain for a prompt.
 
-    The chain includes both assistant and user (tool_result) records.
-    We follow all records but only return assistant records.
-    Stops at the next user prompt with text content.
-
-    Handles subagent chains where progress records bridge the gap between
-    tool_result records and subsequent assistant responses.
+    Collects every assistant record reachable from the prompt without
+    crossing another user text prompt (the next turn), then orders them
+    by timestamp. Breadth-first descent traverses the bridge records that
+    various client versions interpose — attachment/mode/etc. metadata
+    records (v2.1.90+), progress stubs bridging parallel tool_use and
+    Task/Skill chains (≤v2.1.8x) — and explores parallel branches fully,
+    so a dead-end branch can no longer truncate the turn.
     """
-    # Find first assistant record (direct child of prompt)
-    first = None
-    for r in records:
-        if isinstance(r, ProgressStub):
-            continue
-        if r.get("type") == "assistant" and r.get("parentUuid") == prompt_uuid:
-            first = r
-            break
-
-    if not first:
-        return []
-
     if indexes:
-        children_map, record_map = indexes
+        children_map, _record_map = indexes
     else:
-        children_map, record_map = build_record_indexes(records)
+        children_map, _record_map = build_record_indexes(records)
 
-    chain = [first]
-    current_uuid = first.get("uuid", "")
-    visited: set[str] = {prompt_uuid, current_uuid}
-
-    while True:
-        children = children_map.get(current_uuid, [])
-
-        # Find first non-progress child (records without a uuid cannot be
-        # traversed through or marked visited — skip them)
-        next_record = None
-        for child in children:
+    chain: list[dict] = []
+    queue = [prompt_uuid]
+    visited = {prompt_uuid}
+    while queue:
+        for child in children_map.get(queue.pop(), []):
             if isinstance(child, ProgressStub):
+                child_uuid = child.uuid
+                is_assistant = False
+            else:
+                if is_user_text_prompt(child):
+                    continue  # next turn — don't cross
+                child_uuid = child.get("uuid")
+                is_assistant = child.get("type") == "assistant"
+            if not child_uuid or child_uuid in visited:
                 continue
-            child_uuid = child.get("uuid")
-            if child_uuid and child_uuid not in visited:
-                next_record = child
-                break
+            visited.add(child_uuid)
+            queue.append(child_uuid)
+            if is_assistant:
+                chain.append(child)
 
-        if not next_record:
-            # Dead end - try following through progress records.
-            # 1. Follow progress children (traverses agent progress chains
-            #    where parallel tool_use records are linked through deep
-            #    ProgressStub chains).
-            progress_child = _find_progress_sibling(children, visited)
-            if progress_child:
-                visited.add(progress_child)
-                current_uuid = progress_child
-                continue
-
-            # 2. Walk up parent chain looking for unvisited progress siblings.
-            #    One level handles Skill/Task bridges; multiple levels handle
-            #    parallel tool_use chains where the progress fork is on a
-            #    grandparent (e.g., tool_result → assistant → progress chain).
-            ancestor = record_map.get(current_uuid)
-            found_progress = False
-            for _ in range(10):  # bounded walk-up
-                if ancestor is None:
-                    break
-                parent_uuid = (
-                    ancestor.parentUuid
-                    if isinstance(ancestor, ProgressStub)
-                    else ancestor.get("parentUuid")
-                )
-                if not parent_uuid:
-                    break
-                progress_uuid = _find_progress_sibling(
-                    children_map.get(parent_uuid, []), visited
-                )
-                if progress_uuid:
-                    visited.add(progress_uuid)
-                    current_uuid = progress_uuid
-                    found_progress = True
-                    break
-                ancestor = record_map.get(parent_uuid)
-            if found_progress:
-                continue
-            break
-
-        # Stop at user prompts with text content (new conversation turn)
-        if is_user_text_prompt(next_record):
-            break
-        # Only add assistant records to chain
-        visited.add(next_record["uuid"])
-        if next_record.get("type") == "assistant":
-            chain.append(next_record)
-        current_uuid = next_record.get("uuid")
-
+    chain.sort(key=lambda r: parse_timestamp(r.get("timestamp")) or DT_MIN)
     return chain
 
 
