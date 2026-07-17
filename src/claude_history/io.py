@@ -43,6 +43,24 @@ def _extract_progress_stub(line: str) -> ProgressStub | None:
     )
 
 
+def _parse_record_line(line: str) -> dict | None:
+    """Parse one JSONL line into a record dict, or None if unusable.
+
+    Valid JSON that is not an object (42, "str", []) or whose 'message' is
+    not an object would crash every downstream .get() — treat as malformed.
+    """
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    msg = obj.get("message")
+    if msg is not None and not isinstance(msg, dict):
+        return None
+    return obj
+
+
 def parse_jsonl_file(
     filepath: Path, include_progress_stubs: bool = True
 ) -> list[Record]:
@@ -73,9 +91,10 @@ def parse_jsonl_file(
         )
         for line in result.stdout.split("\n"):
             if line.strip():
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
+                record = _parse_record_line(line)
+                if record is not None:
+                    records.append(record)
+                else:
                     skipped += 1
         if skipped:
             print(
@@ -106,9 +125,10 @@ def parse_jsonl_file(
                             if stub:
                                 records.append(stub)
                         continue
-                    try:
-                        records.append(json.loads(line_stripped))
-                    except json.JSONDecodeError:
+                    record = _parse_record_line(line_stripped)
+                    if record is not None:
+                        records.append(record)
+                    else:
                         skipped += 1
             if skipped:
                 print(
@@ -208,9 +228,10 @@ def parse_subagent_file(filepath: Path) -> list[dict]:
             for line in f:
                 line = line.strip()
                 if line:
-                    try:
-                        records.append(json.loads(line))
-                    except json.JSONDecodeError:
+                    record = _parse_record_line(line)
+                    if record is not None:
+                        records.append(record)
+                    else:
                         skipped += 1
         if skipped:
             print(

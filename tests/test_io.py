@@ -269,3 +269,28 @@ class TestSubagentFileLayouts:
     def test_session_id_workflow_layout(self, tmp_path: Path) -> None:
         _, _, wf = self._make_project(tmp_path)
         assert subagent_session_id(wf) == "11111111-2222-3333-4444-555555555555"
+
+
+class TestDegenerateLines:
+    """Valid JSON that is not a usable record must be skipped, not crash
+    every command with AttributeError downstream."""
+
+    def _parse(self, tmp_path: Path, lines: list[str]) -> list:
+        f = tmp_path / "s.jsonl"
+        f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return parse_jsonl_file(f, include_progress_stubs=False)
+
+    def test_non_object_json_lines_skipped(self, tmp_path: Path, capsys) -> None:
+        good = _compact({"type": "user", "uuid": "u1", "sessionId": "s",
+                         "message": {"content": "hi"}})
+        records = self._parse(tmp_path, ["42", '"str"', "[]", "null", good])
+        assert len(records) == 1
+        assert records[0]["uuid"] == "u1"
+        assert "skipped 4 malformed line(s)" in capsys.readouterr().err
+
+    def test_record_with_string_message_skipped(self, tmp_path: Path) -> None:
+        bad = _compact({"type": "user", "uuid": "u1", "message": "just a string"})
+        good = _compact({"type": "user", "uuid": "u2", "sessionId": "s",
+                         "message": {"content": "hi"}})
+        records = self._parse(tmp_path, [bad, good])
+        assert [r["uuid"] for r in records] == ["u2"]
