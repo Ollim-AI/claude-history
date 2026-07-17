@@ -130,3 +130,63 @@ class TestErrorsGoToStderr:
         captured = capsys.readouterr()
         assert "out of range" in captured.err
         assert captured.out == ""
+
+
+class TestColorDetection:
+    """Colors must vanish when output is piped or NO_COLOR is set (agents
+    parse stdout; ANSI codes are pure token waste), and stay available via
+    FORCE_COLOR. Constants are computed at import, so test via subprocess."""
+
+    def _run_sessions(self, project: Path, env_extra: dict) -> str:
+        import os
+        import subprocess
+        import sys
+
+        env = {**os.environ, **env_extra}
+        env.pop("NO_COLOR", None)
+        env.pop("FORCE_COLOR", None)
+        env.pop("CLICOLOR_FORCE", None)
+        env.update(env_extra)
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "from claude_history.cli import main; main()",
+             "sessions", "--project", str(project)],
+            capture_output=True, text=True, env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    @pytest.fixture
+    def project(self, tmp_path: Path) -> Path:
+        records = [
+            {
+                "type": "user",
+                "uuid": "u1",
+                "parentUuid": None,
+                "sessionId": "s1",
+                "timestamp": "2026-01-01T10:00:00Z",
+                "message": {"content": [{"type": "text", "text": "hi"}]},
+            },
+            {
+                "type": "assistant",
+                "uuid": "a1",
+                "parentUuid": "u1",
+                "sessionId": "s1",
+                "timestamp": "2026-01-01T10:00:01Z",
+                "message": {"content": [{"type": "text", "text": "hello"}]},
+            },
+        ]
+        _write_session(tmp_path, "s1", records)
+        return tmp_path
+
+    def test_piped_output_has_no_ansi(self, project: Path) -> None:
+        out = self._run_sessions(project, {})
+        assert "\x1b[" not in out
+
+    def test_no_color_env_disables_ansi(self, project: Path) -> None:
+        out = self._run_sessions(project, {"NO_COLOR": "1", "FORCE_COLOR": "1"})
+        assert "\x1b[" not in out
+
+    def test_force_color_enables_ansi(self, project: Path) -> None:
+        out = self._run_sessions(project, {"FORCE_COLOR": "1"})
+        assert "\x1b[" in out

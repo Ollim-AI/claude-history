@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -25,12 +27,25 @@ class SearchTarget(Enum):
 
 ALL_SEARCH_TARGETS = {t.value for t in SearchTarget}
 
-_RESET = "\033[0m"
-_BOLD = "\033[1m"
-_DIM = "\033[2m"
-_CYAN = "\033[36m"
-_YELLOW = "\033[33m"
-_GREEN = "\033[32m"
+def _colors_enabled() -> bool:
+    """ANSI colors: on for terminals, off when piped or NO_COLOR is set.
+
+    FORCE_COLOR/CLICOLOR_FORCE override piping (e.g. for `less -R`).
+    """
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_COLOR") or os.environ.get("CLICOLOR_FORCE"):
+        return True
+    return sys.stdout.isatty()
+
+
+_COLORS = _colors_enabled()
+_RESET = "\033[0m" if _COLORS else ""
+_BOLD = "\033[1m" if _COLORS else ""
+_DIM = "\033[2m" if _COLORS else ""
+_CYAN = "\033[36m" if _COLORS else ""
+_YELLOW = "\033[33m" if _COLORS else ""
+_GREEN = "\033[32m" if _COLORS else ""
 
 BlockType = Literal["thinking", "text", "tool_use", "tool_result", "notification", "hook"]
 
@@ -232,8 +247,8 @@ DT_MIN = datetime.min.replace(tzinfo=timezone.utc)
 
 # --- Agent teams support ---
 
-_BLUE = "\033[34m"
-_PURPLE = "\033[35m"
+_BLUE = "\033[34m" if _COLORS else ""
+_PURPLE = "\033[35m" if _COLORS else ""
 _TEAMMATE_COLORS: dict[str, str] = {
     "yellow": _YELLOW,
     "blue": _BLUE,
