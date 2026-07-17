@@ -239,3 +239,64 @@ class TestPerformance:
 
         ratio = t1000 / t100
         assert ratio < 20, f"scaling ratio {ratio:.1f}x for 10x input — suggests quadratic"
+
+
+class TestClassificationAndTraversalRobustness:
+    def test_assistant_child_wins_over_later_sibling(self) -> None:
+        # A prompt with children [assistant, user] must stay classified as a
+        # user prompt — last-child-wins previously flipped has_assistant_child.
+        records = [
+            {
+                "type": "user",
+                "uuid": "u1",
+                "parentUuid": None,
+                "sessionId": "s1",
+                "timestamp": "2026-01-01T10:00:00Z",
+                "message": {"content": [{"type": "text", "text": "question"}]},
+            },
+            {
+                "type": "assistant",
+                "uuid": "a1",
+                "parentUuid": "u1",
+                "sessionId": "s1",
+                "timestamp": "2026-01-01T10:00:01Z",
+                "message": {"content": [{"type": "text", "text": "answer"}]},
+            },
+            {
+                "type": "user",
+                "uuid": "u2",
+                "parentUuid": "u1",
+                "sessionId": "s1",
+                "timestamp": "2026-01-01T10:00:02Z",
+                "message": {"content": [{"type": "text", "text": "branch"}]},
+            },
+        ]
+        prompts = extract_user_prompts(records)
+        p = next(p for p in prompts if p.uuid == "u1")
+        assert p.has_assistant_child
+        assert p.is_user_prompt
+
+    def test_uuid_less_child_does_not_crash_traversal(self) -> None:
+        records = [
+            {
+                "type": "user",
+                "uuid": "u1",
+                "parentUuid": None,
+                "message": {"content": [{"type": "text", "text": "hi"}]},
+            },
+            {
+                "type": "assistant",
+                "uuid": "a1",
+                "parentUuid": "u1",
+                "message": {"content": [{"type": "text", "text": "working"}]},
+            },
+            {
+                # Malformed record: no uuid — previously KeyError in
+                # get_full_response when selected as next_record.
+                "type": "user",
+                "parentUuid": "a1",
+                "message": {"content": [{"type": "tool_result", "content": "x"}]},
+            },
+        ]
+        chain = get_full_response(records, "u1")
+        assert [r["uuid"] for r in chain] == ["a1"]

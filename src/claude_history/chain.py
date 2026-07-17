@@ -37,7 +37,9 @@ def extract_user_prompts(records: list[Record]) -> list[Prompt]:
             continue
         parent = r.get("parentUuid")
         rtype = r.get("type")
-        if parent and rtype:
+        # Any assistant child marks a user-typed prompt; never let a later
+        # non-assistant sibling (tool_result, branch) overwrite that.
+        if parent and rtype and child_types.get(parent) != "assistant":
             child_types[parent] = rtype
 
     for record in iter_user_records(records):
@@ -229,12 +231,14 @@ def get_full_response(
     while True:
         children = children_map.get(current_uuid, [])
 
-        # Find first non-progress child
+        # Find first non-progress child (records without a uuid cannot be
+        # traversed through or marked visited — skip them)
         next_record = None
         for child in children:
             if isinstance(child, ProgressStub):
                 continue
-            if child.get("uuid") not in visited:
+            child_uuid = child.get("uuid")
+            if child_uuid and child_uuid not in visited:
                 next_record = child
                 break
 
