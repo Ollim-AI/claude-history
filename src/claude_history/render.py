@@ -30,6 +30,28 @@ MAX_RESULT_LINES = 20
 MAX_RESULT_CHARS = 4000
 
 
+def _elide_base64_sources(content: list) -> list:
+    """Replace base64 image payloads with a size note.
+
+    Read/tool results can embed images as base64 (hundreds of KB); the raw
+    bytes are never useful as text, and full-detail mode would print them.
+    """
+    out = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "image":
+            src = block.get("source")
+            if isinstance(src, dict) and isinstance(src.get("data"), str):
+                block = {
+                    **block,
+                    "source": {
+                        **src,
+                        "data": f"<{len(src['data'])} base64 chars elided>",
+                    },
+                }
+        out.append(block)
+    return out
+
+
 def _clip_result(text: str) -> tuple[str, str]:
     """Clip a success tool result to line and char caps.
 
@@ -274,7 +296,7 @@ def render_blocks(
                 if isinstance(content.content, str):
                     text = content.content
                 else:
-                    text = json.dumps(content.content, indent=2)
+                    text = json.dumps(_elide_base64_sources(content.content), indent=2)
                 if show_full:
                     print(text if content.is_error else dim(text))
                 else:

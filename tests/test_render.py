@@ -332,3 +332,21 @@ class TestResultCharCap:
         render_blocks(blocks, {})
         out = capsys.readouterr().out
         assert "e" * 10_000 in out
+
+
+class TestBase64Elision:
+    def test_image_source_data_elided_in_full_detail(self, capsys) -> None:
+        # response (full_detail) previously printed raw base64 (100KB+).
+        blocks = [
+            ContentBlock(type="tool_use", content=ToolUseContent(
+                id="t1", name="Read", input={"file_path": "/x.jpg"})),
+            ContentBlock(type="tool_result", content=ToolResultContent(
+                content=[{"type": "image",
+                          "source": {"type": "base64", "media_type": "image/jpeg",
+                                     "data": "A" * 200_000}}],
+                is_error=False)),
+        ]
+        render_blocks(blocks, {}, full_detail=True)
+        out = capsys.readouterr().out
+        assert len(out) < 5_000
+        assert "base64 chars elided" in out
