@@ -9,10 +9,48 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from claude_history.io import iter_subagent_files
-from claude_history.models import CLAUDE_PROJECTS_DIR
+from claude_history.models import CLAUDE_PROJECTS_DIR, parse_timestamp
+
+
+def parse_since(value: str) -> datetime:
+    """Parse a --since value into a timezone-aware datetime.
+
+    Supports: Nm (minutes), Nh (hours), Nd (days), Nw (weeks),
+    ISO dates (2024-01-15), and named shortcuts (today, yesterday).
+    """
+    now = datetime.now(timezone.utc)
+    # Named shortcuts mark LOCAL calendar-day boundaries
+    if value == "today":
+        return datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+    if value == "yesterday":
+        return (datetime.now().astimezone() - timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+    # Relative shorthand: Nm, Nh, Nd, Nw
+    m = re.fullmatch(r"(\d+)([mhdw])", value)
+    if m:
+        n = int(m.group(1))
+        unit = m.group(2)
+        deltas = {
+            "m": timedelta(minutes=n),
+            "h": timedelta(hours=n),
+            "d": timedelta(days=n),
+            "w": timedelta(weeks=n),
+        }
+        return now - deltas[unit]
+    # ISO date
+    dt = parse_timestamp(value)
+    if dt:
+        return dt
+    print(f"Error: Cannot parse --since value '{value}'", file=sys.stderr)
+    print("  Examples: 3d, 1w, 24h, 30m, today, yesterday, 2024-01-15", file=sys.stderr)
+    sys.exit(1)
 
 
 def encode_path(path: str) -> str:
