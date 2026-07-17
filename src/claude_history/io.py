@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import sys
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -81,64 +80,32 @@ def parse_jsonl_file(
 ) -> list[Record]:
     """Parse a JSONL file and return list of records.
 
-    Uses grep to filter out 'progress' records (subagent transcripts) which are
-    ~99% of file size. grep is ~5x faster than Python for scanning large files.
+    Progress records (~99% of old-format file size) are skipped by a cheap
+    substring check before JSON parsing. A grep -v fast path used to live
+    here; the in-process scan measured ~8x faster (subprocess fork and
+    pipe decoding dominated), so grep was dropped.
 
     Args:
         filepath: Path to the JSONL file
         include_progress_stubs: If True, also extract lightweight progress stubs
             (uuid, parentUuid, parentToolUseID, agentId) for chain traversal.
             Set to False for commands that don't need response chain following
-            (sessions, prompts, search -p) for a major speedup.
+            (sessions, prompts, search -p) for a speedup.
     """
-    records = []
+    records: list[Record] = []
     skipped = 0
     try:
-        # -F -f -: pattern via stdin avoids Windows argument quoting issues.
-        # -a: a single NUL byte otherwise makes grep declare the file binary
-        # and swallow every record in it.
-        result = subprocess.run(
-            ["grep", "-a", "-F", "-v", "-f", "-", "--", str(filepath)],
-            input='"type":"progress"\n',
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        if result.returncode > 1:
-            # 0 = matches, 1 = no lines left; >1 = grep failed (bad args,
-            # unreadable file) — fall back to the Python parser
-            raise subprocess.SubprocessError(f"grep exited {result.returncode}")
-        for line in result.stdout.split("\n"):
-            if line.strip():
-                record = _parse_record_line(line)
-                if record is not None:
-                    records.append(record)
-                else:
-                    skipped += 1
-
-        # Second pass over the marker lines grep -v dropped: extract stubs
-        # from genuine progress records, and recover normal records that
-        # merely contain the marker nested in their JSON.
-        selected = subprocess.run(
-            ["grep", "-a", "-F", "-f", "-", "--", str(filepath)],
-            input='"type":"progress"\n',
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        if selected.returncode > 1:
-            raise subprocess.SubprocessError(f"grep exited {selected.returncode}")
-        for line in selected.stdout.split("\n"):
-            if not line.strip():
-                continue
-            if _is_progress_line(line):
-                if include_progress_stubs:
-                    stub = _extract_progress_stub(line)
-                    if stub:
-                        records.append(stub)
-            else:
+        with open(filepath, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                if '"type":"progress"' in line and _is_progress_line(line):
+                    if include_progress_stubs:
+                        stub = _extract_progress_stub(line)
+                        if stub:
+                            records.append(stub)
+                    continue
                 record = _parse_record_line(line)
                 if record is not None:
                     records.append(record)
@@ -149,32 +116,8 @@ def parse_jsonl_file(
                 f"Warning: skipped {skipped} malformed line(s) in {filepath}",
                 file=sys.stderr,
             )
-    except (OSError, subprocess.SubprocessError):
-        # Fallback to Python if grep is unavailable
-        try:
-            with open(filepath, encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    line_stripped = line.strip()
-                    if not line_stripped:
-                        continue
-                    if '"type":"progress"' in line and _is_progress_line(line):
-                        if include_progress_stubs:
-                            stub = _extract_progress_stub(line)
-                            if stub:
-                                records.append(stub)
-                        continue
-                    record = _parse_record_line(line_stripped)
-                    if record is not None:
-                        records.append(record)
-                    else:
-                        skipped += 1
-            if skipped:
-                print(
-                    f"Warning: skipped {skipped} malformed line(s) in {filepath}",
-                    file=sys.stderr,
-                )
-        except OSError as e:
-            print(f"Warning: failed to read {filepath}: {e}", file=sys.stderr)
+    except OSError as e:
+        print(f"Warning: failed to read {filepath}: {e}", file=sys.stderr)
     return records
 
 
