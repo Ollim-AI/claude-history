@@ -7,6 +7,7 @@ Navigate conversation histories with a hierarchical approach for efficient token
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -998,6 +999,18 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(137)
+    except BrokenPipeError:
+        # Downstream closed the pipe (e.g. | head) — normal truncation, not an
+        # error. Redirect stdout to devnull so the interpreter's final flush
+        # doesn't print "Exception ignored"; exit 141 = 128+SIGPIPE convention.
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except OSError:
+            pass
+        sys.exit(141)
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        sys.exit(130)
 
 
 if __name__ == "__main__":

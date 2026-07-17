@@ -190,3 +190,48 @@ class TestColorDetection:
     def test_force_color_enables_ansi(self, project: Path) -> None:
         out = self._run_sessions(project, {"FORCE_COLOR": "1"})
         assert "\x1b[" in out
+
+
+class TestBrokenPipe:
+    def test_pipe_closed_early_exits_141_without_traceback(
+        self, tmp_path: Path
+    ) -> None:
+        import subprocess
+        import sys
+
+        # Output must exceed the OS pipe buffer (64KB) so the CLI blocks
+        # writing and hits EPIPE when we close the read end early.
+        big_text = "x" * 300_000
+        records = [
+            {
+                "type": "user",
+                "uuid": "u1",
+                "parentUuid": None,
+                "sessionId": "abc123de",
+                "timestamp": "2026-01-01T10:00:00Z",
+                "message": {"content": [{"type": "text", "text": "hi"}]},
+            },
+            {
+                "type": "assistant",
+                "uuid": "a1",
+                "parentUuid": "u1",
+                "sessionId": "abc123de",
+                "timestamp": "2026-01-01T10:00:01Z",
+                "message": {"content": [{"type": "text", "text": big_text}]},
+            },
+        ]
+        _write_session(tmp_path, "abc123de", records)
+        proc = subprocess.Popen(
+            [sys.executable, "-c",
+             "from claude_history.cli import main; main()",
+             "transcript", "abc123de", "--project", str(tmp_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        proc.stdout.read(1024)
+        proc.stdout.close()
+        rc = proc.wait(timeout=30)
+        stderr = proc.stderr.read().decode()
+        proc.stderr.close()
+        assert rc == 141, f"exit {rc}, stderr: {stderr}"
+        assert "Traceback" not in stderr
+        assert "BrokenPipeError" not in stderr
