@@ -232,14 +232,14 @@ def find_prompt_across_projects(
         return None
     if result.returncode != 0 or not result.stdout.strip():
         return None
-    # Extract project dir from the matching file path
-    match_path = Path(result.stdout.strip().splitlines()[0])
-    # File is under CLAUDE_PROJECTS_DIR/<project>/ — walk up to find project dir
-    for parent in match_path.parents:
-        if parent.parent == CLAUDE_PROJECTS_DIR:
-            if exclude_dir and parent == exclude_dir:
-                return None
-            return parent
+    # Each line is a matching file under CLAUDE_PROJECTS_DIR/<project>/ —
+    # walk up to the project dir, skipping hits inside exclude_dir
+    for line in result.stdout.strip().splitlines():
+        for parent in Path(line).parents:
+            if parent.parent == CLAUDE_PROJECTS_DIR:
+                if not (exclude_dir and parent == exclude_dir):
+                    return parent
+                break
     return None
 
 

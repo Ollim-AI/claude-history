@@ -469,3 +469,34 @@ class TestSearchTargetConflicts:
         with pytest.raises(SystemExit):
             _parse_targets(self._args(target="tools", prompts_only=True))
         assert "cannot be combined" in capsys.readouterr().err
+
+
+class TestFindPromptAcrossProjectsExclude:
+    def _projects(self, tmp_path: Path, monkeypatch) -> Path:
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        monkeypatch.setattr("claude_history.resolve.CLAUDE_PROJECTS_DIR", projects)
+        return projects
+
+    def test_match_in_other_project_wins_over_excluded_hit(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # Previously only the FIRST grep hit was inspected: if it happened to
+        # be in exclude_dir, a valid match elsewhere was never returned.
+        projects = self._projects(tmp_path, monkeypatch)
+        for name in ("-proj-a", "-proj-b"):
+            d = projects / name
+            d.mkdir()
+            (d / "s1.jsonl").write_text('{"uuid":"promptuuid42"}\n')
+        excluded = projects / "-proj-a"
+        found = find_prompt_across_projects("promptuuid42", exclude_dir=excluded)
+        assert found == projects / "-proj-b"
+
+    def test_only_excluded_match_returns_none(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        projects = self._projects(tmp_path, monkeypatch)
+        d = projects / "-proj-a"
+        d.mkdir()
+        (d / "s1.jsonl").write_text('{"uuid":"promptuuid42"}\n')
+        assert find_prompt_across_projects("promptuuid42", exclude_dir=d) is None
