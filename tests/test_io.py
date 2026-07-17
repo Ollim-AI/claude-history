@@ -5,10 +5,13 @@ from pathlib import Path
 
 from claude_history.io import (
     _extract_progress_stub,
+    find_subagent_file,
     get_all_conversations,
     get_session_conversations,
+    iter_subagent_files,
     parse_jsonl_file,
     parse_subagent_file,
+    subagent_session_id,
 )
 from claude_history.models import ProgressStub
 
@@ -225,3 +228,44 @@ class TestGetSessionConversations:
         result = get_session_conversations(tmp_path, "abc123", include_progress_stubs=False)
         assert result is not None
         assert result[0]["_source_file"] == "abc123.jsonl"
+
+
+class TestSubagentFileLayouts:
+    """Subagent files exist in two layouts: flat ({session}/subagents/) and
+    workflow ({session}/subagents/workflows/{run}/). Both must be discovered."""
+
+    def _make_project(self, tmp_path: Path) -> tuple[Path, Path, Path]:
+        session = "11111111-2222-3333-4444-555555555555"
+        flat = tmp_path / session / "subagents" / "agent-aaa111.jsonl"
+        flat.parent.mkdir(parents=True)
+        flat.write_text(
+            _compact({"type": "user", "uuid": "u1", "sessionId": session,
+                      "timestamp": "2026-01-01T00:00:00Z",
+                      "message": {"role": "user", "content": "flat prompt"}}) + "\n"
+        )
+        wf = (tmp_path / session / "subagents" / "workflows" / "wf_123-abc"
+              / "agent-bbb222.jsonl")
+        wf.parent.mkdir(parents=True)
+        wf.write_text(
+            _compact({"type": "user", "uuid": "u2", "sessionId": session,
+                      "timestamp": "2026-01-01T00:00:00Z",
+                      "message": {"role": "user", "content": "workflow prompt"}}) + "\n"
+        )
+        return tmp_path, flat, wf
+
+    def test_iter_finds_both_layouts(self, tmp_path: Path) -> None:
+        project, flat, wf = self._make_project(tmp_path)
+        found = set(iter_subagent_files(project))
+        assert found == {flat, wf}
+
+    def test_find_subagent_file_workflow_layout(self, tmp_path: Path) -> None:
+        project, _, wf = self._make_project(tmp_path)
+        assert find_subagent_file(project, "bbb222") == wf
+
+    def test_session_id_flat_layout(self, tmp_path: Path) -> None:
+        _, flat, _ = self._make_project(tmp_path)
+        assert subagent_session_id(flat) == "11111111-2222-3333-4444-555555555555"
+
+    def test_session_id_workflow_layout(self, tmp_path: Path) -> None:
+        _, _, wf = self._make_project(tmp_path)
+        assert subagent_session_id(wf) == "11111111-2222-3333-4444-555555555555"

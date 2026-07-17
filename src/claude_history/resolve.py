@@ -10,6 +10,7 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
+from claude_history.io import iter_subagent_files
 from claude_history.models import CLAUDE_PROJECTS_DIR
 
 
@@ -188,7 +189,7 @@ def find_subagent_across_projects(
     Returns (project_dir, agent_file_path) or None.
     """
     for d in _iter_other_projects(exclude_dir):
-        for path in d.glob("*/subagents/agent-*.jsonl"):
+        for path in iter_subagent_files(d):
             if path.stem.replace("agent-", "").startswith(agent_id_prefix):
                 return (d, path)
     return None

@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -164,12 +165,30 @@ def get_session_conversations(
     return records
 
 
+def iter_subagent_files(project_dir: Path) -> Iterator[Path]:
+    """Yield subagent JSONL files across both storage layouts.
+
+    Agent-tool subagents: {session}/subagents/agent-{hash}.jsonl
+    Workflow subagents (v2.1.79+): {session}/subagents/workflows/{run}/agent-{hash}.jsonl
+    """
+    yield from project_dir.glob("*/subagents/agent-*.jsonl")
+    yield from project_dir.glob("*/subagents/workflows/*/agent-*.jsonl")
+
+
+def subagent_session_id(filepath: Path) -> str:
+    """Derive the session ID from a subagent file path (dir above 'subagents')."""
+    for parent in filepath.parents:
+        if parent.name == "subagents":
+            return parent.parent.name
+    return filepath.parent.parent.name
+
+
 def find_subagent_file(project_dir: Path, agent_id_prefix: str) -> Path | None:
     """Find a subagent file by agent_id prefix (hex hash).
 
     Returns the first matching file, or None.
     """
-    for path in project_dir.glob("*/subagents/agent-*.jsonl"):
+    for path in iter_subagent_files(project_dir):
         stem_id = path.stem.replace("agent-", "")
         if stem_id.startswith(agent_id_prefix):
             return path

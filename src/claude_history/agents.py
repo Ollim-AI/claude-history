@@ -6,7 +6,12 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-from claude_history.io import parse_jsonl_file, parse_subagent_file
+from claude_history.io import (
+    iter_subagent_files,
+    parse_jsonl_file,
+    parse_subagent_file,
+    subagent_session_id,
+)
 from claude_history.models import (
     DT_MIN,
     STOP_HOOK_FEEDBACK_PREFIX,
@@ -78,7 +83,7 @@ def _extract_error_texts(record: dict) -> list[str]:
 
 def extract_subagent_metadata(filepath: Path, records: list[dict]) -> SubagentMetadata:
     """Extract metadata from a subagent's parsed records."""
-    session_id = filepath.parent.parent.name
+    session_id = subagent_session_id(filepath)
     agent_id = filepath.stem.replace("agent-", "")
 
     # First record metadata
@@ -163,7 +168,7 @@ def get_subagents(project_dir: Path) -> list[SubagentMetadata]:
     """List subagent files in the project directory with metadata."""
     subagents: list[SubagentMetadata] = []
 
-    for jsonl_file in project_dir.glob("*/subagents/agent-*.jsonl"):
+    for jsonl_file in iter_subagent_files(project_dir):
         records = parse_subagent_file(jsonl_file)
         if not records:
             continue

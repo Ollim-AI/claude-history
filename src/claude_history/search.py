@@ -18,6 +18,7 @@ from claude_history.chain import (
     extract_user_prompts,
     get_full_response,
 )
+from claude_history.io import iter_subagent_files
 from claude_history.models import (
     DT_MIN,
     Record,
@@ -43,7 +44,7 @@ def prefilter_files(
             Applied before grep to avoid spawning subprocesses for old files.
     """
     jsonl_files = list(project_dir.glob("*.jsonl"))
-    jsonl_files.extend(project_dir.glob("*/subagents/agent-*.jsonl"))
+    jsonl_files.extend(iter_subagent_files(project_dir))
     if since_dt:
         cutoff = since_dt.timestamp()
         jsonl_files = [f for f in jsonl_files if f.stat().st_mtime >= cutoff]
