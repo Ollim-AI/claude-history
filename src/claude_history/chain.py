@@ -396,15 +396,33 @@ def _split_thinking_tags(text: str) -> list[ContentBlock]:
 
 
 def build_notification_map(records: list[Record]) -> dict[str, TaskNotification]:
-    """Map record UUID → TaskNotification for task-notification user records."""
+    """Map record UUID → TaskNotification for task-notification user records.
+
+    Notifications arrive as plain-string user records in older files and
+    inside text/tool_result blocks of array content in v2.1.19x+ files.
+    """
     notifications: dict[str, TaskNotification] = {}
     for record in iter_user_records(records):
         content = record.get("message", {}).get("content")
-        if not isinstance(content, str):
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            parts = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+                elif block.get("type") == "tool_result" and isinstance(
+                    block.get("content"), str
+                ):
+                    parts.append(block["content"])
+            text = " ".join(parts)
+        else:
             continue
-        if "<task-notification>" not in content:
+        if "<task-notification>" not in text:
             continue
-        notif = parse_task_notification(content)
+        notif = parse_task_notification(text)
         if notif:
             uuid = record.get("uuid", "")
             if uuid:
@@ -538,14 +556,30 @@ def extract_ordered_content(
 
 
 def build_task_agent_map(records: list[Record]) -> dict[str, str]:
-    """Build mapping from tool_use ID to agentId for Task tool calls.
+    """Build mapping from tool_use ID to agentId for Task/Agent tool calls.
 
-    Scans progress record stubs for parentToolUseID -> agentId pairs.
+    Old files link via progress-stub parentToolUseID → agentId; files
+    without progress records (v2.1.15x+) carry agentId in the Agent tool
+    result's toolUseResult.
     """
     mapping: dict[str, str] = {}
     for r in records:
-        if not isinstance(r, ProgressStub):
+        if isinstance(r, ProgressStub):
+            if r.parentToolUseID and r.agentId and r.parentToolUseID not in mapping:
+                mapping[r.parentToolUseID] = r.agentId
             continue
-        if r.parentToolUseID and r.agentId and r.parentToolUseID not in mapping:
-            mapping[r.parentToolUseID] = r.agentId
+        tool_use_result = r.get("toolUseResult")
+        if not isinstance(tool_use_result, dict):
+            continue
+        agent_id = tool_use_result.get("agentId")
+        if not agent_id:
+            continue
+        content = r.get("message", {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                tool_id = block.get("tool_use_id", "")
+                if tool_id and tool_id not in mapping:
+                    mapping[tool_id] = agent_id
     return mapping

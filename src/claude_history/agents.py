@@ -331,11 +331,31 @@ def render_subagent_transcript(filepath: Path, args: argparse.Namespace) -> None
         print("No records found in subagent file.")
         return
 
-    # Separate hook_progress records from the rest for rendering
+    # Collect hook events for rendering. Old files carry hook_progress
+    # records; files without progress records (v2.1.15x+) carry hook data
+    # in attachment records — normalize those to the hook_progress shape
+    # extract_ordered_content expects.
     hook_records = [
         r for r in all_records
         if r.get("type") == "progress" and r.get("data", {}).get("type") == "hook_progress"
     ]
+    for r in all_records:
+        if r.get("type") != "attachment":
+            continue
+        att = r.get("attachment", {})
+        if att.get("type") not in ("hook_success", "hook_additional_context"):
+            continue
+        content = att.get("content", "")
+        if isinstance(content, list):
+            content = "\n".join(str(c) for c in content)
+        hook_records.append({
+            "parentToolUseID": att.get("toolUseID", ""),
+            "data": {
+                "hookName": att.get("hookName", ""),
+                "hookEvent": att.get("hookEvent", ""),
+                "command": att.get("command", "") or content,
+            },
+        })
     # Build record list compatible with chain traversal (non-progress + progress stubs)
     from claude_history.models import ProgressStub
     records: list[dict | object] = []

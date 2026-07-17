@@ -240,3 +240,41 @@ class TestExtractHookText:
         ]
         result = extract_hook_text(chain, [])
         assert result == ""
+
+
+class TestAttachmentHookRecords:
+    def test_attachment_hooks_render_in_subagent_transcript(
+        self, tmp_path, capsys
+    ) -> None:
+        # v2.1.15x+ subagent files carry hook data as attachment records,
+        # not hook_progress; --show-hooks was silently empty.
+        import argparse
+        import json
+
+        from claude_history.agents import render_subagent_transcript
+
+        records = [
+            {"type": "user", "uuid": "u1", "parentUuid": None, "sessionId": "s1",
+             "timestamp": "2026-01-01T00:00:00Z",
+             "message": {"role": "user", "content": "do it"}},
+            {"type": "assistant", "uuid": "a1", "parentUuid": "u1", "sessionId": "s1",
+             "timestamp": "2026-01-01T00:00:01Z",
+             "message": {"content": [
+                 {"type": "tool_use", "id": "toolu_7", "name": "Read",
+                  "input": {"file_path": "/x"}}]}},
+            {"type": "attachment", "uuid": "at1", "parentUuid": "a1", "sessionId": "s1",
+             "timestamp": "2026-01-01T00:00:02Z",
+             "attachment": {"type": "hook_additional_context",
+                            "content": ["WARNING: file too long"],
+                            "hookName": "PreToolUse:Read", "toolUseID": "toolu_7",
+                            "hookEvent": "PreToolUse"}},
+        ]
+        f = tmp_path / "agent-abc1234.jsonl"
+        f.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+        args = argparse.Namespace(
+            show_thinking=False, hide_tools=False, hide_tool_results=False,
+            show_tool_results=False, show_hooks=True, prompts_only=False,
+        )
+        render_subagent_transcript(f, args)
+        out = capsys.readouterr().out
+        assert "PreToolUse:Read" in out
