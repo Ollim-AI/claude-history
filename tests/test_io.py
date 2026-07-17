@@ -309,3 +309,33 @@ class TestNulByteFile:
         records = parse_jsonl_file(f, include_progress_stubs=False)
         uuids = [r["uuid"] for r in records if isinstance(r, dict) and "uuid" in r]
         assert uuids == ["u1", "u2"]
+
+
+class TestNestedProgressMarker:
+    """A normal record whose nested JSON contains '"type":"progress"' (e.g.
+    inside toolUseResult) must survive parsing; genuine progress records are
+    identified by their own (first) type field."""
+
+    def _file(self, tmp_path: Path) -> Path:
+        nested = _compact({
+            "type": "user", "uuid": "u1", "sessionId": "s",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "message": {"content": [{"type": "text", "text": "check this"}]},
+            "toolUseResult": {"sample": {"type": "progress", "n": 1}},
+        })
+        genuine = _progress_line("p1", "u1")
+        f = tmp_path / "s.jsonl"
+        f.write_text(nested + "\n" + genuine + "\n", encoding="utf-8")
+        return f
+
+    def test_nested_marker_record_survives_with_stubs(self, tmp_path: Path) -> None:
+        records = parse_jsonl_file(self._file(tmp_path), include_progress_stubs=True)
+        dicts = [r for r in records if isinstance(r, dict)]
+        stubs = [r for r in records if isinstance(r, ProgressStub)]
+        assert [d["uuid"] for d in dicts] == ["u1"]
+        assert [s.uuid for s in stubs] == ["p1"]
+
+    def test_nested_marker_record_survives_without_stubs(self, tmp_path: Path) -> None:
+        records = parse_jsonl_file(self._file(tmp_path), include_progress_stubs=False)
+        assert [r["uuid"] for r in records if isinstance(r, dict)] == ["u1"]
+        assert not any(isinstance(r, ProgressStub) for r in records)

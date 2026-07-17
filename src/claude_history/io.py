@@ -43,6 +43,21 @@ def _extract_progress_stub(line: str) -> ProgressStub | None:
     )
 
 
+_FIRST_TYPE_RE = re.compile(r'"type":"([^"]*)"')
+
+
+def _is_progress_line(line: str) -> bool:
+    """A record is a progress record iff its own type field says so.
+
+    The record's top-level "type" is always the line's first occurrence
+    (verified against real data); a non-progress record can contain the
+    marker nested in toolUseResult JSON, and substring checks alone
+    silently dropped those records.
+    """
+    m = _FIRST_TYPE_RE.search(line)
+    return bool(m) and m.group(1) == "progress"
+
+
 def _parse_record_line(line: str) -> dict | None:
     """Parse one JSONL line into a record dict, or None if unusable.
 
@@ -101,21 +116,39 @@ def parse_jsonl_file(
                     records.append(record)
                 else:
                     skipped += 1
+
+        # Second pass over the marker lines grep -v dropped: extract stubs
+        # from genuine progress records, and recover normal records that
+        # merely contain the marker nested in their JSON.
+        selected = subprocess.run(
+            ["grep", "-a", "-F", "-f", "-", "--", str(filepath)],
+            input='"type":"progress"\n',
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if selected.returncode > 1:
+            raise subprocess.SubprocessError(f"grep exited {selected.returncode}")
+        for line in selected.stdout.split("\n"):
+            if not line.strip():
+                continue
+            if _is_progress_line(line):
+                if include_progress_stubs:
+                    stub = _extract_progress_stub(line)
+                    if stub:
+                        records.append(stub)
+            else:
+                record = _parse_record_line(line)
+                if record is not None:
+                    records.append(record)
+                else:
+                    skipped += 1
         if skipped:
             print(
                 f"Warning: skipped {skipped} malformed line(s) in {filepath}",
                 file=sys.stderr,
             )
-
-        # Add lightweight progress stubs for chain traversal
-        if include_progress_stubs:
-            with open(filepath, encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if '"type":"progress"' not in line:
-                        continue
-                    stub = _extract_progress_stub(line)
-                    if stub:
-                        records.append(stub)
     except (OSError, subprocess.SubprocessError):
         # Fallback to Python if grep is unavailable
         try:
@@ -124,7 +157,7 @@ def parse_jsonl_file(
                     line_stripped = line.strip()
                     if not line_stripped:
                         continue
-                    if '"type":"progress"' in line:
+                    if '"type":"progress"' in line and _is_progress_line(line):
                         if include_progress_stubs:
                             stub = _extract_progress_stub(line)
                             if stub:
