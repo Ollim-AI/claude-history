@@ -92,16 +92,41 @@ class TestCmdSessionsSizeValidation:
         # Bug 4: --size 0 was silently swallowed by `args.size or PAGE_SIZE`.
         with pytest.raises(SystemExit):
             cmd_sessions(_sessions_args(project, size=0))
-        assert "positive integer" in capsys.readouterr().out
+        assert "positive integer" in capsys.readouterr().err
 
     def test_negative_size_rejected(self, project: Path, capsys) -> None:
         # Bug 4: --size -3 produced "Page 1 out of range (1--96)".
         with pytest.raises(SystemExit):
             cmd_sessions(_sessions_args(project, size=-3))
-        out = capsys.readouterr().out
-        assert "positive integer" in out
-        assert "out of range" not in out
+        err = capsys.readouterr().err
+        assert "positive integer" in err
+        assert "out of range" not in err
 
     def test_default_size_when_omitted(self, project: Path, capsys) -> None:
         cmd_sessions(_sessions_args(project, size=None))
         assert "Sessions (page 1/1)" in capsys.readouterr().out
+
+
+class TestErrorsGoToStderr:
+    @pytest.fixture
+    def project(self, tmp_path: Path) -> Path:
+        records = [
+            {
+                "type": "user",
+                "uuid": "u1",
+                "parentUuid": None,
+                "sessionId": "s1",
+                "timestamp": "2026-01-01T10:00:00Z",
+                "message": {"content": [{"type": "text", "text": "hi"}]},
+            }
+        ]
+        _write_session(tmp_path, "s1", records)
+        return tmp_path
+
+    def test_error_leaves_stdout_clean(self, project: Path, capsys) -> None:
+        # Agents parse stdout as data; errors must go to stderr exclusively.
+        with pytest.raises(SystemExit):
+            cmd_sessions(_sessions_args(project, page=99))
+        captured = capsys.readouterr()
+        assert "out of range" in captured.err
+        assert captured.out == ""

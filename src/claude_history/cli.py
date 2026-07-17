@@ -103,8 +103,8 @@ def parse_since(value: str) -> datetime:
     dt = parse_timestamp(value)
     if dt:
         return dt
-    print(f"Error: Cannot parse --since value '{value}'")
-    print("  Examples: 3d, 1w, 24h, 30m, today, yesterday, 2024-01-15")
+    print(f"Error: Cannot parse --since value '{value}'", file=sys.stderr)
+    print("  Examples: 3d, 1w, 24h, 30m, today, yesterday, 2024-01-15", file=sys.stderr)
     sys.exit(1)
 
 
@@ -171,15 +171,15 @@ def cmd_response(args: argparse.Namespace) -> None:
             project_dir = alt_project
             records, user_record = _find_prompt_records(project_dir, target_uuid)
     if not user_record:
-        print(f"Error: No user prompt found with UUID starting with '{target_uuid}' in any project")
-        print(f"  Hint: Try: claude-history transcript {target_uuid} (session or subagent)")
+        print(f"Error: No user prompt found with UUID starting with '{target_uuid}' in any project", file=sys.stderr)
+        print(f"  Hint: Try: claude-history transcript {target_uuid} (session or subagent)", file=sys.stderr)
         sys.exit(1)
 
     # Get full response chain
     chain = get_full_response(records, user_record["uuid"])
 
     if not chain:
-        print(f"Error: No response found for prompt '{target_uuid}'")
+        print(f"Error: No response found for prompt '{target_uuid}'", file=sys.stderr)
         sys.exit(1)
 
     # Get prompt timestamp for header
@@ -246,7 +246,7 @@ def cmd_subagents(args: argparse.Namespace) -> None:
                 subagents = get_subagents(project_dir)
                 matches = [a for a in subagents if a.agent_id.startswith(agent_id)]
         if not matches:
-            print(f"Error: No subagent found with ID starting with '{agent_id}' in any project")
+            print(f"Error: No subagent found with ID starting with '{agent_id}' in any project", file=sys.stderr)
             sys.exit(1)
         agent = matches[0]
 
@@ -382,10 +382,10 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     matching_sessions = [s for s in sessions if s.session_id.startswith(session_prefix)]
     if not matching_sessions:
         if find_subagent_file(project_dir, session_prefix):
-            print(f"Error: '{session_prefix}' is a subagent ID, not a session")
-            print(f"  Try: claude-history transcript {session_prefix}")
+            print(f"Error: '{session_prefix}' is a subagent ID, not a session", file=sys.stderr)
+            print(f"  Try: claude-history transcript {session_prefix}", file=sys.stderr)
         else:
-            print(f"Error: No session found with ID starting with '{session_prefix}' in any project")
+            print(f"Error: No session found with ID starting with '{session_prefix}' in any project", file=sys.stderr)
         sys.exit(1)
 
     session = matching_sessions[0]
@@ -395,7 +395,7 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     compactions = get_compactions(records, session_id)
 
     if not compactions:
-        print("Error: Session has no context windows")
+        print("Error: Session has no context windows", file=sys.stderr)
         sys.exit(1)
 
     # Prompts-only with multiple windows and no specific index: compact listing
@@ -431,7 +431,8 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     if window_idx is not None:
         if window_idx < 0 or window_idx >= len(compactions):
             print(
-                f"Error: Context window {window_idx} out of range (0-{len(compactions) - 1})"
+                f"Error: Context window {window_idx} out of range (0-{len(compactions) - 1})",
+                file=sys.stderr,
             )
             sys.exit(1)
         windows = [(window_idx, compactions[window_idx])]
@@ -627,14 +628,14 @@ def cmd_sessions(args: argparse.Namespace) -> None:
 
     # Paginate
     if args.size is not None and args.size < 1:
-        print(f"Error: --size must be a positive integer (got {args.size})")
+        print(f"Error: --size must be a positive integer (got {args.size})", file=sys.stderr)
         sys.exit(1)
     page = args.page
     page_size = args.size if args.size is not None else PAGE_SIZE
     total_pages = (len(sessions) + page_size - 1) // page_size
 
     if page < 1 or page > total_pages:
-        print(f"Error: Page {page} out of range (1-{total_pages})")
+        print(f"Error: Page {page} out of range (1-{total_pages})", file=sys.stderr)
         sys.exit(1)
 
     start_idx = (page - 1) * page_size
@@ -662,20 +663,20 @@ def cmd_sessions(args: argparse.Namespace) -> None:
 def _parse_targets(args: argparse.Namespace) -> set[SearchTarget]:
     """Resolve --target, -p, -r flags into a set of SearchTarget values."""
     if args.target and (args.prompts_only or args.responses_only):
-        print("Error: --target cannot be combined with -p/--prompts-only or -r/--responses-only")
+        print("Error: --target cannot be combined with -p/--prompts-only or -r/--responses-only", file=sys.stderr)
         sys.exit(1)
 
     if args.target:
         raw = [t.strip() for t in args.target.split(",") if t.strip()]
         if not raw:
             valid = ", ".join(sorted(ALL_SEARCH_TARGETS))
-            print(f"Error: --target requires at least one value. Valid targets: {valid}")
+            print(f"Error: --target requires at least one value. Valid targets: {valid}", file=sys.stderr)
             sys.exit(1)
         targets: set[SearchTarget] = set()
         for name in raw:
             if name not in ALL_SEARCH_TARGETS:
                 valid = ", ".join(sorted(ALL_SEARCH_TARGETS))
-                print(f'Unknown target "{name}". Valid targets: {valid}')
+                print(f'Unknown target "{name}". Valid targets: {valid}', file=sys.stderr)
                 sys.exit(1)
             targets.add(SearchTarget(name))
         return targets
@@ -686,9 +687,9 @@ def _parse_targets(args: argparse.Namespace) -> set[SearchTarget]:
         return {SearchTarget.RESPONSES, SearchTarget.TOOLS, SearchTarget.HOOKS}
 
     valid = ", ".join(sorted(ALL_SEARCH_TARGETS))
-    print(f"Error: search requires a target. Use -T/--target, -p, or -r.")
-    print(f"  Valid targets: {valid}")
-    print(f"  Example: claude-history search \"query\" -T prompts,tools")
+    print("Error: search requires a target. Use -T/--target, -p, or -r.", file=sys.stderr)
+    print(f"  Valid targets: {valid}", file=sys.stderr)
+    print('  Example: claude-history search "query" -T prompts,tools', file=sys.stderr)
     sys.exit(1)
 
 

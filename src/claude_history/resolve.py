@@ -56,7 +56,7 @@ def resolve_project_dir(args: argparse.Namespace) -> Path:
         result = Path(args.project)
         if result.exists():
             return result
-        print(f"Error: Project directory does not exist: {args.project}")
+        print(f"Error: Project directory does not exist: {args.project}", file=sys.stderr)
         sys.exit(1)
 
     cwd = getattr(args, "cwd", None) or os.getcwd()
@@ -64,9 +64,9 @@ def resolve_project_dir(args: argparse.Namespace) -> Path:
     if result is not None and result.exists():
         return result
     encoded = encode_path(str(Path(cwd).resolve()))
-    print(f"Error: No project directory found for '{cwd}'")
-    print(f"  Searched: ~/.claude/projects/{encoded}")
-    print("  Hint: Use --project <path> to specify the project directory directly")
+    print(f"Error: No project directory found for '{cwd}'", file=sys.stderr)
+    print(f"  Searched: ~/.claude/projects/{encoded}", file=sys.stderr)
+    print("  Hint: Use --project <path> to specify the project directory directly", file=sys.stderr)
     sys.exit(1)
 
 
@@ -137,7 +137,7 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
     elif identifier.startswith("prev-") and identifier[5:].isdigit():
         n = int(identifier[5:])
         if n < 1:
-            print("Error: prev-N requires N >= 1 (prev-1 = previous session).")
+            print("Error: prev-N requires N >= 1 (prev-1 = previous session).", file=sys.stderr)
             sys.exit(1)
     else:
         # If it doesn't look like a hex UUID prefix, try slug resolution
@@ -145,14 +145,14 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
             sid = resolve_slug(identifier, project_dir)
             if sid:
                 return (sid[:8], ctx_window)
-            print(f"Error: No session found with slug '{identifier}'")
+            print(f"Error: No session found with slug '{identifier}'", file=sys.stderr)
             sys.exit(1)
         return (identifier, ctx_window)
 
     session_ids = get_recent_session_ids(project_dir, count=n + 1)
     if len(session_ids) <= n:
         label = "latest" if n == 0 else f"prev-{n}"
-        print(f"Error: Only {len(session_ids)} sessions found, cannot resolve {label}.")
+        print(f"Error: Only {len(session_ids)} sessions found, cannot resolve {label}.", file=sys.stderr)
         sys.exit(1)
     return (session_ids[n][:8], ctx_window)
 
