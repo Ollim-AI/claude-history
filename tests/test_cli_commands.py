@@ -465,3 +465,50 @@ class TestSearchLimit:
         with pytest.raises(SystemExit):
             cmd_search(self._args(tmp_path, limit=0))
         assert "positive integer" in capsys.readouterr().err
+
+
+class TestAmbiguityAndErrorClarity:
+    def test_ambiguous_session_prefix_warns_on_stderr(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        for sid in ("abc11111-0000-0000-0000-000000000000",
+                    "abc22222-0000-0000-0000-000000000000"):
+            _write_session(tmp_path, sid, [
+                {"type": "user", "uuid": f"u-{sid[:5]}", "parentUuid": None,
+                 "sessionId": sid, "timestamp": "2026-01-01T10:00:00Z",
+                 "message": {"content": [{"type": "text", "text": "hi"}]}},
+                {"type": "assistant", "uuid": f"a-{sid[:5]}",
+                 "parentUuid": f"u-{sid[:5]}", "sessionId": sid,
+                 "timestamp": "2026-01-01T10:00:01Z",
+                 "message": {"content": [{"type": "text", "text": "yo"}]}},
+            ])
+        from claude_history.cli import cmd_transcript
+
+        args = argparse.Namespace(
+            project=str(tmp_path), cwd=None, identifier="abc",
+            prompts_only=False, show_thinking=False, hide_tools=False,
+            show_tool_results=False, hide_tool_results=False,
+            show_hooks=False, show_system=False,
+        )
+        cmd_transcript(args)
+        captured = capsys.readouterr()
+        assert "2 sessions match 'abc'" in captured.err
+
+    def test_unreadable_session_file_has_distinct_error(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        (tmp_path / "abc12345-0000-0000-0000-000000000000.jsonl").write_text(
+            "not json at all\n"
+        )
+        from claude_history.cli import cmd_transcript
+
+        args = argparse.Namespace(
+            project=str(tmp_path), cwd=None, identifier="abc12345",
+            prompts_only=False, show_thinking=False, hide_tools=False,
+            show_tool_results=False, hide_tool_results=False,
+            show_hooks=False, show_system=False,
+        )
+        with pytest.raises(SystemExit):
+            cmd_transcript(args)
+        err = capsys.readouterr().err
+        assert "no readable records" in err

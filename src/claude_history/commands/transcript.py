@@ -73,6 +73,11 @@ def cmd_transcript(args: argparse.Namespace) -> None:
                 project_dir, agent_file = found
                 note_cross_project(project_dir)
         if agent_file:
+            if ":" in args.identifier:
+                print(
+                    "Note: context windows do not apply to subagents; showing the full transcript",
+                    file=sys.stderr,
+                )
             render_subagent_transcript(agent_file, args)
             return
 
@@ -85,6 +90,19 @@ def cmd_transcript(args: argparse.Namespace) -> None:
     full_detail = args.show_tool_results
     show_hooks = args.show_hooks
     show_system = getattr(args, "show_system", False)
+
+    candidates = sorted(
+        project_dir.glob(f"{session_prefix}*.jsonl"),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+    if len(candidates) > 1:
+        others = ", ".join(f.stem[:8] for f in candidates[1:4])
+        print(
+            f"Note: {len(candidates)} sessions match '{session_prefix}';"
+            f" showing the most recent, {candidates[0].stem[:8]} (others: {others})",
+            file=sys.stderr,
+        )
 
     # Prompts-only doesn't need progress stubs (no chain traversal)
     include_stubs = not prompts_only
@@ -106,10 +124,19 @@ def cmd_transcript(args: argparse.Namespace) -> None:
         if find_subagent_file(project_dir, session_prefix):
             print(f"Error: '{session_prefix}' is a subagent ID, not a session", file=sys.stderr)
             print(f"  Try: claude-history transcript {session_prefix}", file=sys.stderr)
+        elif any(project_dir.glob(f"{session_prefix}*.jsonl")):
+            print(f"Error: Session file matching '{session_prefix}' exists but has no readable records (empty or corrupt)", file=sys.stderr)
         else:
             print(f"Error: No session found with ID starting with '{session_prefix}' in any project", file=sys.stderr)
         sys.exit(1)
 
+    if len(matching_sessions) > 1:
+        others = ", ".join(s.session_id[:8] for s in matching_sessions[1:4])
+        print(
+            f"Note: {len(matching_sessions)} sessions match '{session_prefix}';"
+            f" showing {matching_sessions[0].session_id[:8]} (others: {others})",
+            file=sys.stderr,
+        )
     session = matching_sessions[0]
     session_id = session.session_id
 

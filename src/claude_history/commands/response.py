@@ -100,8 +100,10 @@ def cmd_response(args: argparse.Namespace) -> None:
             project_dir = alt_project
             records, user_record = _load_prompt_file(alt_file, target_uuid)
     if not user_record:
-        print(f"Error: No user prompt found with UUID starting with '{target_uuid}' in any project", file=sys.stderr)
-        print(f"  Hint: Try: claude-history transcript {target_uuid} (session or subagent)", file=sys.stderr)
+        print(f"Error: No user prompt found with UUID starting with '{target_uuid}' in any project's session files", file=sys.stderr)
+        print(f"  Hint: If it is a session or agent ID, try: claude-history transcript {target_uuid}", file=sys.stderr)
+        print("  Note: messages inside subagent transcripts are not addressable by response;", file=sys.stderr)
+        print("        view the whole subagent with: claude-history transcript AGENT_ID", file=sys.stderr)
         sys.exit(1)
 
     # Get full response chain

@@ -102,6 +102,9 @@ def resolve_project_dir(args: argparse.Namespace) -> Path:
         # dash-leading path downstream reads as an option cluster to grep
         result = Path(args.project).expanduser()
         if result.exists():
+            if not result.is_dir():
+                print(f"Error: --project is not a directory: {args.project}", file=sys.stderr)
+                sys.exit(1)
             return result.resolve()
         if "/" not in args.project:
             named = CLAUDE_PROJECTS_DIR / args.project

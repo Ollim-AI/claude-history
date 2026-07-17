@@ -212,9 +212,14 @@ def get_session_conversations(
     of parsing all files. Returns None if no matching file found (caller
     should fall back to get_all_conversations).
     """
-    matching = list(project_dir.glob(f"{session_prefix}*.jsonl"))
+    matching = sorted(
+        project_dir.glob(f"{session_prefix}*.jsonl"),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
     if not matching:
         return None
+    # Ambiguous prefixes resolve to the most recently active session
     filepath = matching[0]
     records = parse_jsonl_file(filepath, include_progress_stubs)
     for r in records:

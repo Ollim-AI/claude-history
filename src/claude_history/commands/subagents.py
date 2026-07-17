@@ -6,7 +6,7 @@ import argparse
 import sys
 
 from claude_history.agents import extract_subagent_metadata, get_subagents
-from claude_history.io import find_subagent_file, parse_subagent_file
+from claude_history.io import iter_subagent_files, parse_subagent_file
 from claude_history.render import (
     bold,
     cyan,
@@ -36,7 +36,18 @@ def _subagent_detail(project_dir, agent_id: str) -> None:
     Parses only the matching file — the listing path parses every agent
     file in the project (minutes on agent-heavy projects).
     """
-    agent_file = find_subagent_file(project_dir, agent_id)
+    matches = [
+        p for p in iter_subagent_files(project_dir)
+        if p.stem.replace("agent-", "").startswith(agent_id)
+    ]
+    agent_file = matches[0] if matches else None
+    if len(matches) > 1:
+        others = ", ".join(p.stem.replace("agent-", "") for p in matches[1:4])
+        print(
+            f"Note: {len(matches)} subagents match '{agent_id}';"
+            f" showing {matches[0].stem.replace('agent-', '')} (others: {others})",
+            file=sys.stderr,
+        )
     if not agent_file:
         found = find_subagent_across_projects(agent_id, exclude_dir=project_dir)
         if found:
