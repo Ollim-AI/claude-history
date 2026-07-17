@@ -520,3 +520,21 @@ class TestDashLeadingRelativeProject:
         result = resolve_project_dir(args)
         assert result.is_absolute()
         assert result == d.resolve()
+
+
+class TestSinceConsistency:
+    def test_iso_date_is_local_midnight(self) -> None:
+        # ISO dates must mark local calendar-day boundaries like today/
+        # yesterday do, not UTC midnight.
+        result = parse_since("2024-06-15")
+        assert result.hour == 0 and result.minute == 0
+        assert result.utcoffset() == datetime(2024, 6, 15).astimezone().utcoffset()
+
+    def test_empty_string_rejected(self, capsys) -> None:
+        with pytest.raises(SystemExit):
+            parse_since("")
+        assert "Cannot parse --since" in capsys.readouterr().err
+
+    def test_invalid_calendar_date_rejected(self) -> None:
+        with pytest.raises(SystemExit):
+            parse_since("2024-13-45")

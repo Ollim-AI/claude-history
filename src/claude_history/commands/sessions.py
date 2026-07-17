@@ -54,14 +54,15 @@ def cmd_sessions(args: argparse.Namespace) -> None:
         print("No sessions found in project history.")
         return
 
-    # Apply --since filter
-    if args.since:
+    # Apply --since filter ('' must reach parse_since and error, not no-op)
+    if args.since is not None:
         since_dt = parse_since(args.since)
         sessions = [
             s for s in sessions if s.latest_timestamp and s.latest_timestamp >= since_dt
         ]
         if not sessions:
-            print(f"No sessions since {since_dt.strftime('%Y-%m-%d %H:%M')}.")
+            local = since_dt.astimezone().strftime("%Y-%m-%d %H:%M")
+            print(f"No sessions since {local}.")
             return
 
     # Paginate

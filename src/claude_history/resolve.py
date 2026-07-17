@@ -44,7 +44,13 @@ def parse_since(value: str) -> datetime:
             "w": timedelta(weeks=n),
         }
         return now - deltas[unit]
-    # ISO date
+    # Date-only: local midnight, consistent with today/yesterday
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        try:
+            return datetime.fromisoformat(value).astimezone()
+        except ValueError:
+            pass
+    # Full ISO timestamp
     dt = parse_timestamp(value)
     if dt:
         return dt

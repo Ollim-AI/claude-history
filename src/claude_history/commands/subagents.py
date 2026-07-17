@@ -123,7 +123,7 @@ def cmd_subagents(args: argparse.Namespace) -> None:
         session_prefix, _ = resolve_session_ref(session_filter, project_dir)
         subagents = [a for a in subagents if a.session_id.startswith(session_prefix)]
     since = getattr(args, "since", None)
-    if since:
+    if since is not None:
         since_dt = parse_since(since)
         subagents = [a for a in subagents if a.earliest_timestamp and a.earliest_timestamp >= since_dt]
 

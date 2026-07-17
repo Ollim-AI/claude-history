@@ -66,7 +66,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     ]
 
     # Apply --since early to avoid scanning old files
-    since_dt = parse_since(args.since) if args.since else None
+    since_dt = parse_since(args.since) if args.since is not None else None
 
     # Pre-filter files with grep for content matches
     matching_files = prefilter_files(project_dir, query, case_sensitive, since_dt)
