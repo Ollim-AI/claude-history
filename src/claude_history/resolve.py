@@ -136,6 +136,18 @@ def resolve_session_ref(identifier: str, project_dir: Path) -> tuple[str, int | 
         if idx.isdigit():
             ctx_window = int(idx)
             identifier = base
+        elif base in ("latest", "prev") or re.fullmatch(
+            r"prev-\d+|[0-9a-fA-F-]+", base
+        ):
+            # Session-like base with a bad window suffix — error now instead of
+            # falling through to a misleading slug lookup. Slugs/custom titles
+            # containing ':' still reach resolve_slug untouched.
+            print(
+                f"Error: Invalid context window ':{idx}' in '{identifier}' — "
+                f"expected a non-negative integer (e.g. {base}:0)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     if identifier == "latest":
         n = 0

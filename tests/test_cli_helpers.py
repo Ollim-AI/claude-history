@@ -418,3 +418,22 @@ class TestResolveProjectByName:
         err = capsys.readouterr().err
         assert "Tried:" in err
         assert "-no-such-project" in err
+
+
+class TestInvalidWindowSuffix:
+    def test_latest_with_non_numeric_window_errors(self, tmp_path: Path, capsys) -> None:
+        with pytest.raises(SystemExit):
+            resolve_session_ref("latest:abc", tmp_path)
+        err = capsys.readouterr().err
+        assert "Invalid context window" in err
+        assert "latest:0" in err
+
+    def test_hex_prefix_with_negative_window_errors(self, tmp_path: Path, capsys) -> None:
+        with pytest.raises(SystemExit):
+            resolve_session_ref("9aaedc03:-1", tmp_path)
+        assert "Invalid context window" in capsys.readouterr().err
+
+    def test_trailing_bare_colon_errors(self, tmp_path: Path, capsys) -> None:
+        with pytest.raises(SystemExit):
+            resolve_session_ref("prev:", tmp_path)
+        assert "Invalid context window" in capsys.readouterr().err
